@@ -1,5 +1,6 @@
 ---
-import { Alert, Button, Card, Chart, Field, Icon, Input, Label, Select, Skeleton } from '@santi020k/lumen-astro';
+import { Alert, Button, ButtonGroup, Card, Chart, Field, Icon, Label, Select, Skeleton } from '@santi020k/lumen-astro';
+import ForecastDateTime from './date-time/ForecastDateTime.astro';
 import MetricCard from '../../components/MetricCard.astro';
 import SectionHeader from '../../components/SectionHeader.astro';
 import StatusBadge from '../../components/StatusBadge.astro';
@@ -58,6 +59,17 @@ const t = (key: Parameters<typeof text>[1]) => text('ru', key);
           <span data-chart-window>—</span>
         </div>
       </div>
+      <div class="chart-axis-toolbar">
+        <span class="chart-axis-toolbar-label" data-i18n="chartAxisTitle">{t('chartAxisTitle')}</span>
+        <ButtonGroup class="chart-axis-controls" role="group" aria-label={t('chartAxisControls')} data-i18n-aria="chartAxisControls" data-chart-axis-controls>
+          <Button class="chart-axis-button" variant="outline" size="sm" type="button" data-chart-axis-action="auto" aria-pressed="true" data-i18n="chartAxisAuto">{t('chartAxisAuto')}</Button>
+          <Button class="chart-axis-button chart-axis-icon-button" variant="outline" size="sm" type="button" data-chart-axis-action="zoom-out" aria-label={t('chartAxisZoomOut')} data-i18n-aria="chartAxisZoomOut">−</Button>
+          <Button class="chart-axis-button chart-axis-icon-button" variant="outline" size="sm" type="button" data-chart-axis-action="zoom-in" aria-label={t('chartAxisZoomIn')} data-i18n-aria="chartAxisZoomIn">+</Button>
+          <Button class="chart-axis-button chart-axis-icon-button" variant="outline" size="sm" type="button" data-chart-axis-action="pan-down" aria-label={t('chartAxisPanDown')} data-i18n-aria="chartAxisPanDown">↓</Button>
+          <Button class="chart-axis-button chart-axis-icon-button" variant="outline" size="sm" type="button" data-chart-axis-action="pan-up" aria-label={t('chartAxisPanUp')} data-i18n-aria="chartAxisPanUp">↑</Button>
+          <Button class="chart-axis-button" variant="outline" size="sm" type="button" data-chart-axis-action="full" aria-pressed="false" aria-label={t('chartAxisReset')} data-i18n-aria="chartAxisReset">0–100%</Button>
+        </ButtonGroup>
+      </div>
       <Chart class="forecast-chart" presentation="bare" aria-label={t('chartAria')} data-i18n-aria="chartAria">
         <div class="chart-host" data-forecast-chart>
           <Skeleton class="chart-skeleton" aria-label={t('loadingChart')} />
@@ -104,11 +116,7 @@ const t = (key: Parameters<typeof text>[1]) => text('ru', key);
         </div>
         <p class="control-intro" data-i18n="originLocalHelp">{t('originLocalHelp')}</p>
         <form id="forecast-form" class="forecast-form">
-          <Field class="forecast-field">
-            <Label for="origin" data-i18n="forecastOrigin">{t('forecastOrigin')}</Label>
-            <Input id="origin" name="origin" type="datetime-local" step="3600" required aria-describedby="origin-help" />
-            <small id="origin-help"><span data-i18n="hourlyBoundary">{t('hourlyBoundary')}</span> · <span data-local-timezone>{t('localTimezone')}</span></small>
-          </Field>
+          <ForecastDateTime />
           <Field class="forecast-field">
             <Label id="horizon-label" for="horizon" data-i18n="horizonLabel">{t('horizonLabel')}</Label>
             <Select

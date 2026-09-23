@@ -1,4 +1,5 @@
 import { text } from '../../lib/preferences.mjs';
+import { autoPercentDomain, percentAxisTicks } from './percent-axis.mjs';
 
 const chartWidth = 920;
 const chartHeight = 360;
@@ -67,10 +68,10 @@ function quantileBand(points, x, y) {
 }
 
 function formatPercent(value, locale) {
-  return `${new Intl.NumberFormat(locale === 'kk' ? 'kk-KZ' : 'ru-RU', { maximumFractionDigits: 1 }).format(value * 100)}%`;
+  return `${new Intl.NumberFormat(locale === 'kk' ? 'kk-KZ' : 'ru-RU', { maximumFractionDigits: 2 }).format(value * 100)}%`;
 }
 
-export function renderForecastChart(rows, locale = 'ru') {
+export function renderForecastChart(rows, locale = 'ru', requestedDomain = null) {
   const groups = forecastGroups(Array.isArray(rows) ? rows : []);
   const chartPoints = groups.flatMap(([, points]) => points.flatMap((point) => [point.p10, point.p50, point.p90]))
     .filter(finiteValue);
@@ -81,20 +82,15 @@ export function renderForecastChart(rows, locale = 'ru') {
   const leads = groups.flatMap(([, points]) => points.map((point) => point.lead));
   const minLead = Math.min(...leads);
   const maxLead = Math.max(...leads);
-  const minValue = Math.min(...chartPoints);
-  const maxValue = Math.max(...chartPoints);
   const leadRange = maxLead - minLead || 1;
-  const valueRange = maxValue - minValue || 0.1;
-  const valuePadding = valueRange * 0.1;
-  const domainMin = minValue - valuePadding;
-  const domainMax = maxValue + valuePadding;
+  const [domainMin, domainMax] = Array.isArray(requestedDomain) && requestedDomain.length === 2
+    ? requestedDomain
+    : autoPercentDomain(rows);
   const x = (lead) => margin.left + ((lead - minLead) / leadRange) * plotWidth;
   const y = (value) => margin.top + ((domainMax - value) / (domainMax - domainMin)) * plotHeight;
 
-  const grid = Array.from({ length: 5 }, (_, index) => {
-    const fraction = index / 4;
-    const value = domainMax - (domainMax - domainMin) * fraction;
-    const yPosition = margin.top + plotHeight * fraction;
+  const grid = percentAxisTicks([domainMin, domainMax]).map((value) => {
+    const yPosition = y(value);
     return `<g class="chart-grid-row"><line x1="${margin.left}" y1="${yPosition.toFixed(2)}" x2="${(chartWidth - margin.right).toFixed(2)}" y2="${yPosition.toFixed(2)}" /><text x="${margin.left - 12}" y="${(yPosition + 4).toFixed(2)}" text-anchor="end">${formatPercent(value, locale)}</text></g>`;
   }).join('');
 
@@ -116,5 +112,5 @@ export function renderForecastChart(rows, locale = 'ru') {
     return `<g class="forecast-series" style="--series-color:${color}"><polygon class="uncertainty-band" points="${band}" aria-label="${label} · p10–p90" /><path class="forecast-bound" data-quantile="p10" d="${lower}" /><path class="forecast-median" data-quantile="p50" d="${median}" /><path class="forecast-bound" data-quantile="p90" d="${upper}" /><g class="series-label"><line x1="${margin.left + index * 160}" y1="21" x2="${margin.left + 22 + index * 160}" y2="21" /><text x="${margin.left + 30 + index * 160}" y="25">${label}</text></g></g>`;
   }).join('');
 
-  return `<svg class="forecast-plot" viewBox="0 0 ${chartWidth} ${chartHeight}" role="img" aria-label="${escapeHtml(text(locale, 'chartSvgLabel'))}"><title>${escapeHtml(text(locale, 'chartSvgTitle'))}</title><desc>${escapeHtml(text(locale, 'chartSvgDescription'))}</desc><g class="chart-grid">${grid}</g><line class="chart-axis" x1="${margin.left}" y1="${margin.top}" x2="${margin.left}" y2="${margin.top + plotHeight}" /><line class="chart-axis" x1="${margin.left}" y1="${margin.top + plotHeight}" x2="${chartWidth - margin.right}" y2="${margin.top + plotHeight}" />${ticks}<text class="axis-title" x="16" y="${chartHeight / 2}" text-anchor="middle" transform="rotate(-90 16 ${chartHeight / 2})">${escapeHtml(text(locale, 'normalizedOutput'))}</text>${series}</svg>`;
+  return `<svg class="forecast-plot" viewBox="0 0 ${chartWidth} ${chartHeight}" role="img" aria-label="${escapeHtml(text(locale, 'chartSvgLabel'))}"><title>${escapeHtml(text(locale, 'chartSvgTitle'))}</title><desc>${escapeHtml(text(locale, 'chartSvgDescription'))}</desc><defs><clipPath id="forecast-plot-clip"><rect x="${margin.left}" y="${margin.top}" width="${plotWidth}" height="${plotHeight}" /></clipPath></defs><g class="chart-grid">${grid}</g><line class="chart-axis" x1="${margin.left}" y1="${margin.top}" x2="${margin.left}" y2="${margin.top + plotHeight}" /><line class="chart-axis" x1="${margin.left}" y1="${margin.top + plotHeight}" x2="${chartWidth - margin.right}" y2="${margin.top + plotHeight}" />${ticks}<text class="axis-title" x="16" y="${chartHeight / 2}" text-anchor="middle" transform="rotate(-90 16 ${chartHeight / 2})">${escapeHtml(text(locale, 'normalizedOutput'))}</text><g class="forecast-series-layer" clip-path="url(#forecast-plot-clip)">${series}</g></svg>`;
 }

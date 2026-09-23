@@ -1,0 +1,55 @@
+.event-content > .event-explanation {
+  margin: 7px 0 6px;
+  color: hsl(var(--ink-soft));
+  font-family: var(--font-body);
+  font-size: 11px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.event-details {
+  margin-top: 7px;
+}
+
+.event-details summary {
+  cursor: pointer;
+  color: hsl(var(--ink-muted));
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.event-diagnostics {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.event-diagnostic-row {
+  display: grid;
+  grid-template-columns: minmax(115px, max-content) minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  margin: 0;
+  color: hsl(var(--ink-soft));
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.event-diagnostic-row > span {
+  color: hsl(var(--ink-muted));
+}
+
+.event-diagnostic-row > code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: hsl(var(--ink-soft));
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+
+@media (max-width: 520px) {
+  .event-diagnostic-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+}

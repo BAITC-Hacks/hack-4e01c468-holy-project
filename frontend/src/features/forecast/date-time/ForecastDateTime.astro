@@ -1,0 +1,160 @@
+---
+import { DatePicker, Field, Label, Select } from '@santi020k/lumen-astro';
+import { getForecastDateTimeMessages, parseForecastDateTime } from './date-time.mjs';
+
+interface Props {
+  locale?: 'ru' | 'kk';
+  value?: string;
+}
+
+const { locale = 'ru', value = '' } = Astro.props;
+const activeLocale = locale === 'kk' ? 'kk' : 'ru';
+const messages = getForecastDateTimeMessages(activeLocale);
+const selection = parseForecastDateTime(value);
+const hourOptions = Array.from({ length: 24 }, (_, hour) => {
+  const value = String(hour).padStart(2, '0');
+  return { label: `${value}:00`, value };
+});
+---
+
+<div class="forecast-date-time" data-forecast-date-time data-locale={activeLocale}>
+  <div class="forecast-date-time__fields">
+    <Field class="forecast-field forecast-date-time__field">
+      <Label for="forecast-origin-date" data-forecast-date-label>{messages.dateLabel}</Label>
+      <DatePicker
+        id="forecast-origin-date"
+        class="forecast-date-time__date"
+        type="date"
+        value={selection?.date ?? ''}
+        placeholder={messages.datePlaceholder}
+        required
+        aria-describedby="forecast-origin-help forecast-origin-date-error"
+      />
+      <small class="forecast-date-time__error" id="forecast-origin-date-error" data-forecast-date-error role="alert" hidden></small>
+    </Field>
+
+    <Field class="forecast-field forecast-date-time__field">
+      <Label for="forecast-origin-hour" data-forecast-hour-label>{messages.hourLabel}</Label>
+      <Select
+        id="forecast-origin-hour"
+        class="forecast-date-time__hour"
+        value={selection?.hour}
+        options={hourOptions}
+        placeholder={messages.hourPlaceholder}
+        required
+        aria-describedby="forecast-origin-hour-error"
+      />
+      <small class="forecast-date-time__error" id="forecast-origin-hour-error" data-forecast-hour-error role="alert" hidden></small>
+    </Field>
+  </div>
+
+  <small class="forecast-date-time__timezone" id="forecast-origin-help" data-forecast-timezone>
+    {messages.timezoneCaption}
+  </small>
+  <input id="origin" data-forecast-canonical-origin type="hidden" name="origin" value={selection?.value ?? ''} />
+</div>
+
+<style>
+  .forecast-date-time {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .forecast-date-time__fields {
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) minmax(6rem, 0.8fr);
+    gap: 10px;
+    min-width: 0;
+  }
+
+  .forecast-date-time__field {
+    min-width: 0;
+  }
+
+  .forecast-date-time__timezone {
+    color: hsl(var(--ink-muted));
+    font-size: 9px;
+    line-height: 1.4;
+  }
+
+  .forecast-date-time__error {
+    color: hsl(var(--danger));
+    font-size: 9px;
+    line-height: 1.35;
+  }
+
+  .forecast-date-time :global(.ui-date-picker-field),
+  .forecast-date-time :global(.ui-select-field) {
+    width: 100%;
+    min-width: 0;
+  }
+
+  /* Keep the browser's locale-dependent native date field out of the first paint. */
+  .forecast-date-time :global([data-ui-date-picker-native]) {
+    display: none;
+  }
+
+  .forecast-date-time :global([data-ui-date-picker]:has([data-ui-date-picker-control][hidden]))::after {
+    content: 'ДД.ММ.ГГГГ';
+    display: flex;
+    align-items: center;
+    box-sizing: border-box;
+    height: 42px;
+    padding: 0 12px;
+    border: 1px solid hsl(var(--line));
+    border-radius: 8px;
+    background: hsl(var(--surface));
+    color: hsl(var(--ink-muted));
+    font-size: 11px;
+  }
+
+  .forecast-date-time[data-locale='kk'] :global([data-ui-date-picker]:has([data-ui-date-picker-control][hidden]))::after {
+    content: 'КК.АА.ЖЖЖЖ';
+  }
+
+  .forecast-date-time :global(.ui-date-picker__trigger),
+  .forecast-date-time :global(.ui-select__trigger) {
+    min-width: 0;
+    min-height: 42px;
+    height: 42px;
+    border-radius: 8px;
+    background-color: hsl(var(--surface));
+    color: hsl(var(--ink));
+    font-size: 11px;
+  }
+
+  .forecast-date-time :global(.ui-date-picker__popover) {
+    z-index: 40;
+    width: min(19rem, calc(100vw - 2rem));
+    max-width: calc(100vw - 2rem);
+    border-color: hsl(var(--line));
+    border-radius: 10px;
+    background: hsl(var(--surface));
+    color: hsl(var(--ink));
+    box-shadow: var(--ui-shadow-md);
+  }
+
+  .forecast-date-time :global(.ui-date-picker__popover > .ui-calendar) {
+    width: 100%;
+    padding: 12px;
+  }
+
+  .forecast-date-time :global(.ui-calendar th) {
+    color: hsl(var(--ink-muted));
+    font-size: 10px;
+  }
+
+  .forecast-date-time :global(.ui-calendar td) {
+    min-width: 30px;
+    height: 34px;
+    color: hsl(var(--ink-soft));
+    font-size: 11px;
+  }
+
+  @media (max-width: 22rem) {
+    .forecast-date-time__fields {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+</style>

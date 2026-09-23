@@ -33,6 +33,17 @@ test('plots numeric CSV values as normalized quantiles', () => {
   assert.equal((renderForecastChart(csvRows).match(/class="uncertainty-band/g) ?? []).length, 2);
 });
 
+test('uses accurate percent ticks for a supplied vertical domain without changing forecast values', () => {
+  const input = structuredClone(rows);
+  const svg = renderForecastChart(rows, 'ru', [0, 0.02]);
+
+  assert.match(svg, />0%<\/text>/);
+  assert.match(svg, />0,5%<\/text>/);
+  assert.match(svg, />1,5%<\/text>/);
+  assert.match(svg, /clipPath id="forecast-plot-clip"/);
+  assert.equal(JSON.stringify(rows), JSON.stringify(input));
+});
+
 test('escapes backend text before it is placed in an HTML surface', () => {
   assert.equal(escapeHtml(`<svg onload="alert('x')">&`), '&lt;svg onload=&quot;alert(&#39;x&#39;)&quot;&gt;&amp;');
 });

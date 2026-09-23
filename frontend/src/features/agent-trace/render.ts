@@ -3,6 +3,7 @@ import { asRecord, displayValue, formatAlmaty } from '../../lib/format';
 import { eventActionLabel, eventOutcomeLabel } from '../../lib/dashboard-model.mjs';
 import { text } from '../../lib/preferences.mjs';
 import type { RunView } from '../../lib/types';
+import { eventDiagnosticLabels, eventReasonExplanation } from './reasons.mjs';
 
 export function renderAgentTrace(run: RunView | null, locale: 'ru' | 'kk' = 'ru'): void {
   const list = document.querySelector<HTMLElement>('[data-event-list]');
@@ -29,17 +30,19 @@ export function renderAgentTrace(run: RunView | null, locale: 'ru' | 'kk' = 'ru'
   empty.hidden = true;
   list.hidden = false;
   list.innerHTML = events.map((event) => {
+    const diagnosticLabels = eventDiagnosticLabels(locale);
     const sequence = escapeHtml(displayValue(event.sequence, locale));
     const state = escapeHtml(eventActionLabel(event.state, locale));
     const action = escapeHtml(eventActionLabel(event.action, locale));
     const outcomeLabel = eventOutcomeLabel(event.outcome, locale);
     const outcome = escapeHtml(outcomeLabel);
+    const explanation = escapeHtml(eventReasonExplanation(event, locale));
     const reason = escapeHtml(displayValue(event.reason, locale));
     const timestamp = escapeHtml(formatAlmaty(event.timestamp, locale));
     const duration = typeof event.duration_ms === 'number' && Number.isFinite(event.duration_ms)
       ? `${new Intl.NumberFormat(locale === 'kk' ? 'kk-KZ' : 'ru-RU').format(event.duration_ms)} ${text(locale, 'unitMilliseconds')}`
       : text(locale, 'durationUnavailable');
-    const eventRunId = escapeHtml(displayValue(asRecord(event).run_id, locale));
+    const eventRunId = escapeHtml(displayValue(asRecord(event).run_id ?? run?.run_id, locale));
     const rawTimestamp = typeof event.timestamp === 'string' ? escapeHtml(event.timestamp) : '';
     const outcomeCode = typeof event.outcome === 'string' ? event.outcome.toLowerCase() : 'unknown';
     const outcomeState = outcomeCode === 'success' || outcomeCode === 'succeeded' || outcomeCode === 'completed'
@@ -47,6 +50,6 @@ export function renderAgentTrace(run: RunView | null, locale: 'ru' | 'kk' = 'ru'
       : outcomeCode === 'failed' || outcomeCode === 'error' ? 'failed'
         : outcomeCode === 'skipped' ? 'warning'
           : outcomeCode === 'started' || outcomeCode === 'running' ? 'info' : 'unknown';
-    return `<li class="event-item"><span class="event-sequence">${sequence}</span><div class="event-content"><div class="event-heading"><strong>${state}</strong><span class="event-outcome" data-outcome="${outcomeState}">${outcome}</span><time datetime="${rawTimestamp}">${timestamp}</time></div><div class="event-meta"><span>${escapeHtml(text(locale, 'action'))}: ${action}</span><span>${escapeHtml(duration)}</span></div><details class="event-details"><summary>${escapeHtml(text(locale, 'technicalDetails'))}</summary><p>${reason}</p><code>${eventRunId}</code></details></div></li>`;
+    return `<li class="event-item"><span class="event-sequence">${sequence}</span><div class="event-content"><div class="event-heading"><strong>${state}</strong><span class="event-outcome" data-outcome="${outcomeState}">${outcome}</span><time datetime="${rawTimestamp}">${timestamp}</time></div><p class="event-explanation">${explanation}</p><div class="event-meta"><span>${escapeHtml(text(locale, 'action'))}: ${action}</span><span>${escapeHtml(duration)}</span></div><details class="event-details"><summary>${escapeHtml(diagnosticLabels.disclosure)}</summary><div class="event-diagnostics"><p class="event-diagnostic-row"><span>${escapeHtml(diagnosticLabels.reason)}</span><code>${reason}</code></p><p class="event-diagnostic-row"><span>${escapeHtml(diagnosticLabels.runId)}</span><code>${eventRunId}</code></p></div></details></div></li>`;
   }).join('');
 }

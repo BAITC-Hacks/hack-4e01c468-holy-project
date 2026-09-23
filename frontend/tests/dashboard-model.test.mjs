@@ -21,6 +21,60 @@ test('detects synthetic provenance without using API mode as a proxy', () => {
   assert.equal(dashboardModel.isSyntheticWeatherProvenance({ weather_model: 'noaa_gfs_0p25' }), false);
 });
 
+test('recognizes only verified fresh CatBoost runs degraded solely by corrected quantile crossings', () => {
+  const manifest = {
+    status: 'degraded',
+    competition_valid: true,
+    model: { name: 'catboost_quantile' },
+    weather_provenance: { provenance_status: 'verified', competition_valid: true },
+    data_quality: {
+      history_rows: 100,
+      latest_available_at: '2026-09-22T18:00:00Z',
+      observation_age_hours: 6,
+      stale_observations: false,
+      degrade_reasons: ['model_quantile_crossings_corrected'],
+      prediction_quality: {
+        model: { quantile_crossing_correction_count: 15, quantile_clipping_count: 0, quantile_crossing_policy: 'sort_per_row_then_clip' },
+        quality_gate: { quantile_correction_count: 0, clipping_count: 0 },
+      },
+    },
+  };
+
+  assert.equal(dashboardModel.isQuantileCorrectionOnlyDegradation(manifest), true);
+  assert.equal(dashboardModel.isQuantileCorrectionOnlyDegradation({
+    ...manifest,
+    data_quality: { ...manifest.data_quality, degrade_reasons: [
+      'model_quantile_crossings_corrected', 'quality_gate_quantile_crossings_corrected',
+    ], prediction_quality: {
+      ...manifest.data_quality.prediction_quality,
+      quality_gate: { quantile_correction_count: 2, clipping_count: 0 },
+    } },
+  }), true);
+
+  const rejected = [
+    { ...manifest, model: { name: 'persistence' } },
+    { ...manifest, weather_provenance: { provenance_status: 'synthetic' } },
+    { ...manifest, competition_valid: false },
+    { ...manifest, competition_valid: undefined },
+    { ...manifest, weather_provenance: { ...manifest.weather_provenance, competition_valid: false } },
+    { ...manifest, weather_provenance: { provenance_status: 'verified' } },
+    { ...manifest, data_quality: { ...manifest.data_quality, stale_observations: true } },
+    { ...manifest, data_quality: { ...manifest.data_quality, observation_age_hours: 25 } },
+    { ...manifest, data_quality: { ...manifest.data_quality, degrade_reasons: ['model_quantile_crossings_corrected', 'weather_provenance_unverified'] } },
+    { ...manifest, data_quality: { ...manifest.data_quality, prediction_quality: {
+      ...manifest.data_quality.prediction_quality,
+      model: { ...manifest.data_quality.prediction_quality.model, quantile_clipping_count: 1 },
+    } } },
+    { ...manifest, data_quality: { ...manifest.data_quality, prediction_quality: {
+      ...manifest.data_quality.prediction_quality,
+      model: { ...manifest.data_quality.prediction_quality.model, quantile_crossing_correction_count: 0 },
+    } } },
+    { ...manifest, status: 'success' },
+    { status: 'degraded', model: { name: 'catboost_quantile' }, data_quality: {} },
+  ];
+  for (const candidate of rejected) assert.equal(dashboardModel.isQuantileCorrectionOnlyDegradation(candidate), false);
+});
+
 test('names actual agent stages separately from their outcomes', () => {
   assert.equal(eventActionLabel('train_or_load_model', 'ru'), 'Расчёт модели');
   assert.equal(eventActionLabel('check_for_updates', 'ru'), 'Проверка обновлений');

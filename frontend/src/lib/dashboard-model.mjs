@@ -17,6 +17,44 @@ export function isSyntheticWeatherProvenance(provenance, rowWeatherModel) {
     || (typeof weatherModel === 'string' && weatherModel.startsWith('synthetic-'));
 }
 
+export function isQuantileCorrectionOnlyDegradation(manifest) {
+  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest) || manifest.status !== 'degraded') return false;
+  const model = manifest.model && typeof manifest.model === 'object' ? manifest.model : {};
+  const weather = manifest.weather_provenance && typeof manifest.weather_provenance === 'object'
+    ? manifest.weather_provenance
+    : {};
+  const quality = manifest.data_quality && typeof manifest.data_quality === 'object' ? manifest.data_quality : {};
+  const prediction = quality.prediction_quality && typeof quality.prediction_quality === 'object'
+    ? quality.prediction_quality
+    : {};
+  const modelQuality = prediction.model && typeof prediction.model === 'object' ? prediction.model : {};
+  const gateQuality = prediction.quality_gate && typeof prediction.quality_gate === 'object'
+    ? prediction.quality_gate
+    : {};
+  const modelCrossings = modelQuality.quantile_crossing_correction_count;
+  const modelClipping = modelQuality.quantile_clipping_count;
+  const gateCrossings = gateQuality.quantile_correction_count;
+  const gateClipping = gateQuality.clipping_count;
+  const reasons = quality.degrade_reasons;
+  const freshAge = quality.observation_age_hours;
+
+  if (model.name !== 'catboost_quantile' || weather.provenance_status !== 'verified') return false;
+  if (manifest.competition_valid !== true || weather.competition_valid !== true) return false;
+  if (quality.stale_observations !== false || typeof freshAge !== 'number' || !Number.isFinite(freshAge) || freshAge < 0 || freshAge > 24) return false;
+  if (typeof quality.latest_available_at !== 'string' || !Number.isFinite(Date.parse(quality.latest_available_at))) return false;
+  if (typeof quality.history_rows !== 'number' || !Number.isFinite(quality.history_rows) || quality.history_rows <= 0) return false;
+  if (![modelCrossings, modelClipping, gateCrossings, gateClipping].every((value) => Number.isInteger(value) && value >= 0)) return false;
+  if (modelClipping !== 0 || gateClipping !== 0 || modelCrossings + gateCrossings === 0) return false;
+  if (modelCrossings > 0 && modelQuality.quantile_crossing_policy !== 'sort_per_row_then_clip') return false;
+
+  const expectedReasons = [];
+  if (modelCrossings > 0) expectedReasons.push('model_quantile_crossings_corrected');
+  if (gateCrossings > 0) expectedReasons.push('quality_gate_quantile_crossings_corrected');
+  return Array.isArray(reasons)
+    && reasons.length === expectedReasons.length
+    && expectedReasons.every((reason) => reasons.includes(reason));
+}
+
 const errorMessages = new Map([
   ['request_timeout', 'requestTimeout'],
   ['connection_error', 'connectionError'],

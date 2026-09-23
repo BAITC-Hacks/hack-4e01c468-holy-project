@@ -1,6 +1,6 @@
 # Incremental modular redesign
 
-**Status:** batch 1 (composition root and first ports) completed; batches 2–7 remain proposed and unstarted.
+**Status:** batches 1–2 completed: composition root/first ports and pure forecast/weather policy extraction. Batches 3–7 remain proposed and unstarted. Batch 2 preserves legacy imports and weather fingerprints; storage no longer imports agent policy and features no longer import the concrete weather module. The subsequent diagnostics-only patch also passes the full 250-test Python suite.
 **Scope:** preserve the current Python, CLI, Streamlit and artifact behavior while
 making the shared application logic easier to test and change. This follows the
 repository architecture skill: modular monolith, inward dependencies, meaningful

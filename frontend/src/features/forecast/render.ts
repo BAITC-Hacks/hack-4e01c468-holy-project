@@ -1,19 +1,22 @@
-import { apiErrorMessage, forecastSummary, formatPercentage, isSyntheticWeatherProvenance, runStatusLabel, weatherSourceLabel } from '../../lib/dashboard-model.mjs';
+import { apiErrorMessage, forecastSummary, formatPercentage, isQuantileCorrectionOnlyDegradation, isSyntheticWeatherProvenance, runStatusLabel, weatherSourceLabel } from '../../lib/dashboard-model.mjs';
 import { forecastCsvUrl } from '../../lib/api';
 import { escapeHtml, renderForecastChart } from './chart.mjs';
 import { asRecord, displayValue, formatAlmaty, turbineName } from '../../lib/format';
 import { text } from '../../lib/preferences.mjs';
+import { resolvePercentAxisDomain } from './percent-axis.mjs';
 import type { ForecastRow, RunView } from '../../lib/types';
+import type { PercentAxisState } from './percent-axis.mjs';
 
 function setText(selector: string, value: string): void {
   const node = document.querySelector<HTMLElement>(selector);
   if (node) node.textContent = value;
 }
 
-function updateBadge(node: Element | null, label: string, outcome: string): void {
+function updateBadge(node: Element | null, label: string, outcome: string, hidden = false): void {
   if (!node) return;
   node.textContent = label;
   node.setAttribute('data-outcome', outcome);
+  (node as HTMLElement).hidden = hidden;
 }
 
 function updateStat(name: string, labelKey: string, value: string, locale: 'ru' | 'kk'): void {
@@ -51,6 +54,7 @@ function alertContent(
     return { outcome: 'failed', message: text(locale, 'forecastFailedAlert') };
   }
   if (run.status === 'degraded') {
+    if (isQuantileCorrectionOnlyDegradation(run.manifest)) return null;
     const model = asRecord(asRecord(run.manifest).model).name;
     if (typeof model === 'string' && ['persistence', 'seasonal', 'power_curve'].includes(model)) {
       return { outcome: 'degraded', message: text(locale, 'baselineDegradedAlert', { model }) };
@@ -122,12 +126,16 @@ export function renderForecastViews(
   run: RunView | null,
   failure: string | null = null,
   locale: 'ru' | 'kk' = 'ru',
+  axisState: PercentAxisState = { mode: 'auto', domain: null },
 ): void {
-  const statusLabel = run ? runStatusLabel(run.status, locale) : failure ? text(locale, 'apiFailed') : text(locale, 'noSavedRun');
-  const outcome = run?.status ?? (failure ? 'failed' : 'unknown');
-  updateBadge(document.querySelector('.heading-outcome .run-status'), statusLabel, outcome);
-  updateBadge(document.querySelector('.chart-context-detail .run-status'), run ? runStatusLabel(run.status, locale) : text(locale, 'noRun'), outcome);
-  updateBadge(document.querySelector('.context-heading .run-status'), run ? runStatusLabel(run.status, locale) : text(locale, 'noRun'), outcome);
+  const correctionOnly = run ? isQuantileCorrectionOnlyDegradation(run.manifest) : false;
+  const statusLabel = run
+    ? runStatusLabel(run.status, locale)
+    : failure ? text(locale, 'apiFailed') : text(locale, 'noSavedRun');
+  const outcome = run ? correctionOnly ? 'info' : run.status : failure ? 'failed' : 'unknown';
+  updateBadge(document.querySelector('.heading-outcome .run-status'), statusLabel, outcome, correctionOnly);
+  updateBadge(document.querySelector('.chart-context-detail .run-status'), run ? statusLabel : text(locale, 'noRun'), outcome, correctionOnly);
+  updateBadge(document.querySelector('.context-heading .run-status'), run ? statusLabel : text(locale, 'noRun'), outcome, correctionOnly);
 
   setText('[data-run-id]', run?.run_id ?? '—');
   setText('[data-selected-run]', run?.run_id ?? (failure ? text(locale, 'apiUnavailableAlert') : text(locale, 'noRunSelected')));
@@ -140,15 +148,22 @@ export function renderForecastViews(
   const chart = document.querySelector<HTMLElement>('[data-forecast-chart]');
   if (chart) {
     chart.innerHTML = rows.length > 0
-      ? renderForecastChart(rows, locale)
+      ? renderForecastChart(rows, locale, resolvePercentAxisDomain(axisState, rows))
       : `<p class="chart-empty">${escapeHtml(text(locale, failure ? 'emptyForecastFailure' : 'emptyForecast'))}</p>`;
+  }
+  const axisControls = document.querySelector<HTMLElement>('[data-chart-axis-controls]');
+  for (const button of axisControls?.querySelectorAll<HTMLButtonElement>('[data-chart-axis-action]') ?? []) {
+    const action = button.dataset.chartAxisAction;
+    button.disabled = rows.length === 0;
+    if (action === 'auto') button.setAttribute('aria-pressed', String(axisState.mode === 'auto'));
+    if (action === 'full') button.setAttribute('aria-pressed', String(axisState.mode === 'full'));
   }
 
   const horizon = run ? asRecord(run.manifest).horizon : null;
   updateStat('horizon', 'forecastHorizon', horizon === null || horizon === undefined ? text(locale, 'unavailable') : text(locale, 'hoursUtc05', { hours: displayValue(horizon, locale) }), locale);
   updateStat('weather', 'weatherSource', weatherName(run, locale), locale);
   updateStat('turbines', 'turbineCount', run ? String(new Set(rows.map((row) => row.turbine_id).filter(Boolean)).size) : text(locale, 'unavailable'), locale);
-  updateStat('status', 'currentRun', run ? runStatusLabel(run.status, locale) : failure ? text(locale, 'apiFailed') : text(locale, 'noSavedRun'), locale);
+  updateStat('status', 'currentRun', correctionOnly ? text(locale, 'calculationComplete') : statusLabel, locale);
 
   const summary = forecastSummary(rows, locale);
   setText('[data-summary-output="turbine_1"]', summary.turbine_1);

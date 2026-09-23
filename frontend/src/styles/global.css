@@ -209,7 +209,7 @@ astro-dev-toolbar { display: none !important; }
 .overview-section .hero-capabilities { display: flex; flex-wrap: wrap; gap: 9px 17px; margin: 19px 0 0; padding: 0; list-style: none; }
 .hero-capabilities li { display: flex; min-height: 28px; align-items: center; gap: 7px; color: hsl(var(--ink-soft)); font-size: 11px; font-weight: 620; }
 .hero-capabilities li .ui-icon { flex: none; color: hsl(var(--brand)); }
-.overview-section .hero-art { position: absolute; z-index: 0; inset: 0 0 0 39%; overflow: hidden; opacity: 1; }
+.overview-section .hero-art { position: absolute; z-index: 0; inset: 0 0 0 25%; overflow: hidden; opacity: 1; -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 48%); mask-image: linear-gradient(90deg, transparent 0%, #000 48%); }
 .overview-section .hero-art img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: 75% 48%; }
 .overview-section .hero-art::after { position: absolute; inset: 0; background: linear-gradient(90deg, hsl(var(--surface-muted)) 0%, hsl(var(--surface-muted) / .84) 18%, hsl(var(--surface-muted) / .24) 60%, hsl(var(--surface) / .08) 100%); content: ''; }
 .hero-image-caption { position: absolute; z-index: 1; right: 16px; bottom: 12px; color: hsl(var(--ink-soft)); font-size: 9px; font-weight: 650; letter-spacing: .08em; text-shadow: 0 1px 8px hsl(var(--surface) / .75); }
@@ -253,6 +253,13 @@ astro-dev-toolbar { display: none !important; }
 .chart-context .section-title { font-size: clamp(20px, 1.8vw, 24px); }
 .chart-context .section-description { margin-top: 5px; font-size: 11.5px; }
 .chart-context-detail { display: flex; flex: none; align-items: center; gap: 9px; color: hsl(var(--ink-muted)); font-family: var(--font-mono); font-size: 10px; }
+.chart-axis-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+.chart-axis-toolbar-label { color: hsl(var(--ink-muted)); font-size: 10px; font-weight: 620; }
+.chart-axis-controls { display: inline-flex; align-items: center; gap: 4px; }
+.chart-axis-button[aria-pressed="true"] { border-color: hsl(var(--brand) / .42); background: hsl(var(--brand-soft)); color: hsl(var(--brand)); }
+.chart-axis-icon-button { min-width: 34px; padding-inline: 0; font-size: 16px; font-weight: 650; }
+.chart-axis-button:focus-visible { outline: 2px solid hsl(var(--brand)); outline-offset: 2px; }
+.chart-axis-button:disabled { cursor: not-allowed; opacity: .55; }
 .forecast-chart.ui-chart--bare { min-width: 0; overflow: hidden; padding: 0; }
 .chart-host { display: grid; min-width: 0; min-height: 260px; align-items: center; }
 .overview-section .forecast-plot { display: block; width: 100%; min-width: 0; min-height: 0; height: auto; overflow: visible; }
@@ -280,6 +287,8 @@ astro-dev-toolbar { display: none !important; }
 
 .forecast-aside { display: grid; min-width: 0; gap: 14px; }
 .controls-card.ui-card, .run-context.ui-card { display: grid; gap: 12px; padding: 18px; }
+.controls-card.ui-card { overflow: visible; position: relative; z-index: 2; min-width: 0; }
+.controls-card .forecast-form { min-width: 0; }
 .control-heading { display: flex; align-items: center; gap: 10px; }
 .control-icon { display: grid; width: 35px; height: 35px; flex: none; place-items: center; border: 1px solid hsl(var(--brand) / .14); border-radius: 9px; background: hsl(var(--brand-soft)); color: hsl(var(--brand)); }
 .control-heading .section-kicker { margin: 0 0 4px; font-size: 8px; }
@@ -325,6 +334,9 @@ astro-dev-toolbar { display: none !important; }
 .forecast-table-scroll { height: min(24rem, 58vh); min-height: 12rem; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
 .forecast-table-scroll .ui-table-wrap { overflow: visible; }
 .forecast-table thead th { position: sticky; z-index: 1; top: 0; background: hsl(var(--surface)); box-shadow: 0 1px hsl(var(--line)); }
+.metrics-table-scroll { max-height: min(24rem, 58vh); overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.metrics-table-scroll .ui-table-wrap { overflow: visible; }
+.metrics-table thead th { position: sticky; z-index: 1; top: 0; background: hsl(var(--surface)); box-shadow: 0 1px hsl(var(--line)); }
 .table-loading, .empty-cell { color: hsl(var(--ink-muted)); font-size: 11px; }
 .inline-empty { border: 1px dashed hsl(var(--line)); border-radius: 10px; background: hsl(var(--surface-muted) / .45); }
 .inline-empty h3 { color: hsl(var(--ink)); font-size: 14px; }

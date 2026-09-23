@@ -5,8 +5,11 @@ import { renderAgentTrace } from '../features/agent-trace/render';
 import { renderBacktest } from '../features/backtest/render';
 import { renderDataQuality } from '../features/data-quality/render';
 import { renderForecastViews } from '../features/forecast/render';
+import { createPercentAxisState, reducePercentAxisState } from '../features/forecast/percent-axis.mjs';
+import { mountForecastDateTime } from '../features/forecast/date-time/date-time.mjs';
 import { readLocale, readTheme, resolveTheme, saveLocale, text, toggleTheme } from './preferences.mjs';
 import type { DashboardWorkflow, ForecastRequest, RunView } from './types';
+import type { PercentAxisState } from '../features/forecast/percent-axis.mjs';
 
 const pollDelayMs = 2_000;
 const maxPollsPerAttempt = 120;
@@ -44,8 +47,8 @@ function setRecovery(form: HTMLFormElement, visible: boolean, busy: boolean): vo
   if (button) button.disabled = !visible || busy;
 }
 
-function updateViews(run: RunView | null, latestFailure: string | null, locale: 'ru' | 'kk'): void {
-  renderForecastViews(run, latestFailure, locale);
+function updateViews(run: RunView | null, latestFailure: string | null, locale: 'ru' | 'kk', axisState: PercentAxisState): void {
+  renderForecastViews(run, latestFailure, locale, axisState);
   renderBacktest(run, locale);
   renderAgentTrace(run, locale);
   renderDataQuality(run, locale);
@@ -166,7 +169,8 @@ export function startDashboard(): void {
   document.documentElement.dataset.theme = theme;
 
   const origin = form.elements.namedItem('origin') as HTMLInputElement | null;
-  if (origin) origin.value = formatAlmatyDateTime(new Date(Math.floor(Date.now() / 3_600_000) * 3_600_000));
+  const dateTime = mountForecastDateTime(form, locale);
+  dateTime?.sync(formatAlmatyDateTime(new Date(Math.floor(Date.now() / 3_600_000) * 3_600_000)));
   let formTouched = false;
   form.addEventListener('input', () => { formTouched = true; });
   form.addEventListener('change', () => { formTouched = true; });
@@ -184,6 +188,8 @@ export function startDashboard(): void {
     job: null,
     active: false,
   };
+  let chartAxisState = createPercentAxisState();
+  let chartRunId: string | null = null;
   const latestRetry = document.querySelector<HTMLButtonElement>('[data-latest-retry]');
   const jobRetry = form.querySelector<HTMLButtonElement>('[data-job-retry]');
 
@@ -195,7 +201,12 @@ export function startDashboard(): void {
 
   const render = (): void => {
     updateApiStatus(apiConnected, apiStatusKey);
-    updateViews(workflow.selectedRun, latestFailure, locale);
+    const nextRunId = workflow.selectedRun?.run_id ?? null;
+    if (nextRunId !== chartRunId) {
+      chartAxisState = createPercentAxisState();
+      chartRunId = nextRunId;
+    }
+    updateViews(workflow.selectedRun, latestFailure, locale, chartAxisState);
     renderJobState(workflow, form, paused, polling, locale);
     if (requestFailure && !workflow.job) setFeedback(form, apiErrorMessage(requestFailure, locale), 'failed');
     else if (validationMessageKey) setFeedback(form, text(locale, validationMessageKey), 'warning');
@@ -203,10 +214,12 @@ export function startDashboard(): void {
 
   const localize = (): void => {
     applyStaticTranslations(locale, theme);
+    dateTime?.setLocale(locale);
     render();
   };
 
   applyStaticTranslations(locale, theme);
+  dateTime?.setLocale(locale);
   for (const button of document.querySelectorAll<HTMLButtonElement>('[data-locale-switch]')) {
     button.addEventListener('click', () => {
       locale = button.dataset.localeSwitch === 'kk' ? 'kk' : 'ru';
@@ -228,6 +241,16 @@ export function startDashboard(): void {
     localize();
   });
 
+  document.querySelector<HTMLElement>('[data-chart-axis-controls]')?.addEventListener('click', (event: MouseEvent) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const button = target.closest<HTMLButtonElement>('[data-chart-axis-action]');
+    const action = button?.dataset.chartAxisAction;
+    if (!button || button.disabled || !action) return;
+    chartAxisState = reducePercentAxisState(chartAxisState, action, workflow.selectedRun?.forecast ?? []);
+    render();
+  });
+
   async function loadLatest(): Promise<void> {
     if (latestRetry) latestRetry.hidden = true;
     updateApiStatus(false, 'connecting');
@@ -236,7 +259,7 @@ export function startDashboard(): void {
       const run = await getLatestRun();
       if (run && !formTouched) {
         const savedOrigin = run.manifest.forecast_origin ?? run.forecast[0]?.forecast_origin;
-        if (origin && typeof savedOrigin === 'string') origin.value = formatAlmatyDateTime(new Date(savedOrigin));
+        if (origin && typeof savedOrigin === 'string') dateTime?.sync(formatAlmatyDateTime(new Date(savedOrigin)));
         const horizon = form.elements.namedItem('horizon') as HTMLSelectElement | null;
         if (horizon && (run.manifest.horizon === 24 || run.manifest.horizon === 48)) {
           horizon.value = String(run.manifest.horizon);
@@ -319,13 +342,15 @@ export function startDashboard(): void {
       horizon: horizonInput?.value === '48' ? 48 : 24,
       refresh: intent === 'refresh',
     };
+    chartAxisState = createPercentAxisState();
+    chartRunId = null;
     workflow = { form: request, selectedRun: null, job: null, active: true };
     latestFailure = null;
     requestFailure = null;
     validationMessageKey = null;
     paused = false;
     polling = false;
-    updateViews(null, null, locale);
+    updateViews(null, null, locale, chartAxisState);
     setFeedback(form, text(locale, 'requestSubmitting'), 'info');
     renderJobState(workflow, form, paused, polling, locale);
 
