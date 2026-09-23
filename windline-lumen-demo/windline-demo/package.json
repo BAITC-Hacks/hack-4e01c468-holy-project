@@ -1,7 +1,0 @@
-{
-  "name": "windline-lumen-demo",
-  "private": true,
-  "type": "module",
-  "scripts": {"dev": "astro dev --host 0.0.0.0", "build": "astro build", "preview": "astro preview --host 0.0.0.0"},
-  "dependencies": {"astro": "^5.0.0", "@santi020k/lumen-astro": "1.6.0"}
-}

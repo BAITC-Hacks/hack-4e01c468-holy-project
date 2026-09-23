@@ -12,3 +12,7 @@ artifacts/
 frontend/node_modules/
 frontend/dist/
 frontend/.astro/
+.idea/
+windline-lumen-demo/
+windline-lumen-demo.zip
+.hackflow/reports/*.diff
