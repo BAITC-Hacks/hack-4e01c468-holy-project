@@ -1,13 +1,15 @@
 import { escapeHtml } from '../forecast/chart.mjs';
-import { asRecord, displayValue, formatUtc, humanizeCode } from '../../lib/format';
+import { asRecord, displayValue, formatAlmaty, humanizeCode } from '../../lib/format';
+import { apiModeLabel } from '../../lib/dashboard-model.mjs';
+import { text } from '../../lib/preferences.mjs';
 import type { HealthView, RunView } from '../../lib/types';
 
-function ageLabel(value: unknown): string {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return 'Unavailable';
-  return `${value.toFixed(1)} hours`;
+function ageLabel(value: unknown, locale: 'ru' | 'kk'): string {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return text(locale, 'unavailable');
+  return text(locale, 'hours', { value: new Intl.NumberFormat(locale === 'kk' ? 'kk-KZ' : 'ru-RU', { maximumFractionDigits: 1 }).format(value) });
 }
 
-export function renderDataQuality(run: RunView | null, health: HealthView | null): void {
+export function renderDataQuality(run: RunView | null, health: HealthView | null, locale: 'ru' | 'kk' = 'ru'): void {
   const badge = document.querySelector<HTMLElement>('[data-provenance-badge]');
   const summary = document.querySelector<HTMLElement>('[data-provenance-summary]');
   const content = document.querySelector<HTMLElement>('[data-quality-content]');
@@ -15,11 +17,11 @@ export function renderDataQuality(run: RunView | null, health: HealthView | null
 
   if (!run) {
     if (badge) {
-      badge.textContent = 'Unavailable';
+      badge.textContent = text(locale, 'unavailable');
       badge.dataset.outcome = 'unknown';
     }
-    if (summary) summary.textContent = 'No selected run';
-    content.innerHTML = '<p class="empty-cell">Load a saved forecast or generate a new run to inspect data provenance.</p>';
+    if (summary) summary.textContent = text(locale, 'noRunSelected');
+    content.innerHTML = `<p class="empty-cell">${escapeHtml(text(locale, 'qualityNotSelected'))}</p>`;
     return;
   }
 
@@ -28,29 +30,29 @@ export function renderDataQuality(run: RunView | null, health: HealthView | null
   const quality = asRecord(manifest.data_quality);
   const rowWeather = run.forecast.find((row) => typeof row.weather_model === 'string');
   const valid = manifest.competition_valid === true || weather.competition_valid === true;
-  const mode = health?.mode ?? displayValue(manifest.mode);
-  const badgeText = mode === 'demo' || health?.offline ? 'Demo only' : valid ? 'Verified' : 'Unverified';
+  const mode = health?.mode ?? displayValue(manifest.mode, locale);
+  const badgeText = mode === 'demo' || health?.offline ? text(locale, 'demoOnly') : valid ? text(locale, 'verified') : text(locale, 'unverified');
   if (badge) {
     badge.textContent = badgeText;
     badge.dataset.outcome = valid ? 'success' : 'degraded';
   }
   if (summary) summary.textContent = valid
-    ? 'Backend provenance gate passed for this run.'
-    : 'Original weather release availability is not verified.';
+    ? text(locale, 'provenancePassed')
+    : text(locale, 'provenanceUnverified');
 
   const details: Array<[string, string]> = [
-    ['API mode', `${mode}${health?.offline ? ' · offline' : ''}`],
-    ['Weather provider', displayValue(weather.provider)],
-    ['Weather model', displayValue(weather.weather_model ?? rowWeather?.weather_model)],
-    ['Archive classification', humanizeCode(weather.provenance_status)],
-    ['Weather issue time', formatUtc(weather.issued_at)],
-    ['Weather available at', formatUtc(weather.available_at)],
-    ['Retrieved at', formatUtc(weather.retrieved_at)],
-    ['Latest observation', formatUtc(quality.latest_available_at)],
-    ['Observation age', ageLabel(quality.observation_age_hours)],
-    ['Stale observations', typeof quality.stale_observations === 'boolean' ? quality.stale_observations ? 'Yes' : 'No' : 'Unavailable'],
-    ['History rows', displayValue(quality.history_rows)],
-    ['Competition eligibility', valid ? 'Verified' : manifest.competition_valid === false || weather.competition_valid === false ? 'Not verified' : 'Unavailable'],
+    ['apiMode', apiModeLabel(mode, Boolean(health?.offline), locale)],
+    ['weatherProvider', displayValue(weather.provider, locale)],
+    ['weatherModel', displayValue(weather.weather_model ?? rowWeather?.weather_model, locale)],
+    ['archiveClassification', humanizeCode(weather.provenance_status, locale)],
+    ['weatherIssueTime', formatAlmaty(weather.issued_at, locale)],
+    ['weatherAvailableAt', formatAlmaty(weather.available_at, locale)],
+    ['retrievedAt', formatAlmaty(weather.retrieved_at, locale)],
+    ['latestObservation', formatAlmaty(quality.latest_available_at, locale)],
+    ['observationAge', ageLabel(quality.observation_age_hours, locale)],
+    ['staleObservations', typeof quality.stale_observations === 'boolean' ? quality.stale_observations ? text(locale, 'yes') : text(locale, 'no') : text(locale, 'unavailable')],
+    ['historyRows', displayValue(quality.history_rows, locale)],
+    ['competitionEligibility', valid ? text(locale, 'verified') : manifest.competition_valid === false || weather.competition_valid === false ? text(locale, 'unverified') : text(locale, 'unavailable')],
   ];
-  content.innerHTML = `<dl class="quality-list">${details.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join('')}</dl>`;
+  content.innerHTML = `<dl class="quality-list">${details.map(([key, value]) => `<div><dt>${escapeHtml(text(locale, key))}</dt><dd>${escapeHtml(value)}</dd></div>`).join('')}</dl>`;
 }

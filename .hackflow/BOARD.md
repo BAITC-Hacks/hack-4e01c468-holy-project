@@ -10,9 +10,11 @@ role report with progress and blockers.
 | P0 | T3 weather/provenance/cache | weather | done | Validation fixes accepted;live96rows;competition provenance unverified |
 | P0 | T4 features, T5 models/backtest | ml | done | ML fix reviewed;66 combined module tests;actual default demo train completed |
 | P0 | T6 agent/LLM/artifacts | agent | done | Integrity+reuseaudit fixes reviewed;root34focusedtests;immutable artifacts and complete invocation trace |
-| P0 | T7 service/CLI | integration | active | T2–T6 interfaces ready; CLI/e2e |
-| P0 | T8 real Astro/Lumen frontend | lumen-css-urgent + lumen-runtime-finish | active | CSS only vs runtime/locale files disjoint; old93615 stopped, preserve markup; root integration/browser |
-| P0 | T9 acceptance/docs | orchestrator | blocked | T1–T8; full suite and demo |
+| P0 | T7 service/CLI/API | orchestrator | done | Local API reviewed, NOAA competition baseline96rows and refresh/CSV passed |
+| P0 | T8 real Astro/Lumen frontend | orchestrator | done | Reference composition, RU/KK, light/dark; browser8cases + actual NOAA E2E passed |
+| P0 | T9 acceptance/docs | orchestrator | active | Russian README + validationflow done;246Python tests; full real GFS ML/backtest/month remains |
+| P0 | T11 NOAA weather/source wiring | orchestrator | done | Full48h realweather verified + applicationbaseline; sourceisolation reviewed |
+| P1 | T12 GFS ML calibration/backtest/month | unassigned | ready | Needs explicit archive budget; don't reuse other source model or claim completed |
 | P0 | T10 incremental architecture redesign | orchestrator | done | Batch1 bootstrap/ports and stable identity fix accepted by Astra; further stages retained for gradual work |
 
 Allowed statuses: `ready`, `active`, `blocked`, `review`, `done`.

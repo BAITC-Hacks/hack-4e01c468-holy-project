@@ -4,6 +4,7 @@ import ast
 import inspect
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -36,6 +37,45 @@ def test_build_runtime_keeps_explicit_weather_and_analyzer(tmp_path):
 
     assert runtime.weather_provider is weather
     assert runtime.analyzer is analyzer
+
+
+def test_configured_gfs_provider_is_selected_without_fetching(tmp_path):
+    from wind_forecast.bootstrap import build_runtime
+    from wind_forecast.infrastructure.weather.noaa_gfs import NoaaGfsWeatherProvider
+
+    settings = replace(_settings(tmp_path), weather_provider="noaa_gfs")
+
+    runtime = build_runtime(settings)
+
+    assert isinstance(runtime.weather_provider, NoaaGfsWeatherProvider)
+    assert runtime.weather_provider.cache_dir == settings.cache_dir
+
+
+def test_weather_injection_precedes_configured_gfs_provider(tmp_path):
+    from wind_forecast.bootstrap import build_runtime
+
+    weather = object()
+    settings = replace(_settings(tmp_path), weather_provider="noaa_gfs")
+
+    runtime = build_runtime(settings, weather_provider=weather)
+
+    assert runtime.weather_provider is weather
+
+
+def test_offline_and_fixture_sources_precede_configured_gfs_provider(tmp_path):
+    from wind_forecast.bootstrap import build_runtime
+    from wind_forecast.infrastructure.weather.demo import (
+        FixtureWeatherProvider,
+        SyntheticWeatherProvider,
+    )
+
+    settings = replace(_settings(tmp_path), weather_provider="noaa_gfs")
+    offline = build_runtime(settings, offline=True)
+    fixture_path = Path(__file__).parent / "fixtures/weather/synthetic_48h.json"
+    fixture = build_runtime(settings, weather_fixture=fixture_path)
+
+    assert isinstance(offline.weather_provider, SyntheticWeatherProvider)
+    assert isinstance(fixture.weather_provider, FixtureWeatherProvider)
 
 
 def test_offline_runtime_fetches_synthetic_demo_weather_without_openai(

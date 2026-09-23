@@ -1,9 +1,4 @@
-"""Point-extracted, provenance-checked weather from NOAA's public GFS archive.
-
-Only NOAA's public S3 bucket is contacted. Large global GRIB files are never
-downloaded: this provider fetches their small indexes and individual bounded
-GRIB message ranges, then retains only point values and audit evidence.
-"""
+"""NOAA GFS adapter for the project's point-in-time weather contract."""
 
 from __future__ import annotations
 
@@ -13,13 +8,9 @@ import math
 import os
 import re
 import tempfile
-import time
-import xml.etree.ElementTree as ET
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
 
 import pandas as pd
 import requests
@@ -28,193 +19,42 @@ from wind_forecast.contracts import RunRequest, WeatherSnapshot
 from wind_forecast.weather import (
     TURBINE_COORDINATES,
     WEATHER_COLUMNS,
-    WEATHER_VARIABLES,
     canonical_hash,
     validate_weather,
     weather_fingerprint,
 )
 
-NOAA_GFS_BUCKET_URL = "https://noaa-gfs-bdp-pds.s3.amazonaws.com/"
-DATASET_REGISTRY_URL = "https://registry.opendata.aws/noaa-gfs-bdp-pds/"
-WEATHER_MODEL = "noaa_gfs_0p25"
-MAX_GRIB_MESSAGE_BYTES = 5 * 1024 * 1024
-MAX_INDEX_BYTES = 2 * 1024 * 1024
-MAX_LIST_BYTES = 2 * 1024 * 1024
-MAX_CACHE_BYTES = 10 * 1024 * 1024
-MAX_HTTP_ATTEMPTS = 3
-HTTP_TIMEOUT = (5, 30)
-_CACHE_SCHEMA_VERSION = 1
-_POLICY_VERSION = "point-ranges-v1"
-_CONTENT_RANGE_RE = re.compile(r"^bytes (\d+)-(\d+)/(\d+)$")
+from .noaa_gfs_archive import NoaaGfsArchive, ObjectMetadata
+from .noaa_gfs_codec import EcCodesDecoder, validate_grib_message
+from .noaa_gfs_common import (
+    CACHE_SCHEMA_VERSION as _CACHE_SCHEMA_VERSION,
+    DATASET_REGISTRY_URL,
+    FIELD_SPECS as _FIELD_SPECS,
+    FieldSpec as _FieldSpec,
+    MAX_CACHE_BYTES,
+    MAX_GRIB_MESSAGE_BYTES,
+    NOAA_GFS_BUCKET_URL,
+    POLICY_VERSION as _POLICY_VERSION,
+    WEATHER_MODEL,
+    forecast_key as _forecast_key,
+    iso as _iso,
+    parse_utc as _parse_utc,
+    request_origin as _origin,
+    selected_run as _selected_run,
+)
+
+# Kept private aliases for focused tests of the default decoder and GRIB envelope.
+_EcCodesDecoder = EcCodesDecoder
+_make_message = validate_grib_message
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
-@dataclass(frozen=True)
-class _FieldSpec:
-    index_name: str
-    index_level: str
-    decoded_short_names: tuple[str, ...]
-    type_of_level: str
-    level: int
-    grib_units: str
-    output_variable: str
-
-
-_FIELD_SPECS: tuple[_FieldSpec, ...] = (
-    _FieldSpec(
-        "UGRD", "10 m above ground", ("10u", "u"), "heightAboveGround", 10, "m s**-1", "u10"
-    ),
-    _FieldSpec(
-        "VGRD", "10 m above ground", ("10v", "v"), "heightAboveGround", 10, "m s**-1", "v10"
-    ),
-    # In ecCodes GFS 100 m components decode as u/v with level=100, not 100u/100v.
-    _FieldSpec("UGRD", "100 m above ground", ("u",), "heightAboveGround", 100, "m s**-1", "u100"),
-    _FieldSpec("VGRD", "100 m above ground", ("v",), "heightAboveGround", 100, "m s**-1", "v100"),
-    _FieldSpec(
-        "TMP", "2 m above ground", ("2t", "t"), "heightAboveGround", 2, "K", "temperature_k"
-    ),
-    _FieldSpec(
-        "PRES", "surface", ("sp", "pres"), "surface", 0, "Pa", "surface_pressure_pa"
-    ),
-    _FieldSpec("GUST", "surface", ("gust",), "surface", 0, "m s**-1", "gust"),
-)
-
-
-@dataclass(frozen=True)
-class _ObjectMetadata:
-    key: str
-    etag: str
-    size: int
-    last_modified: datetime
-
-    def evidence(self) -> dict[str, Any]:
-        return {
-            "key": self.key,
-            "etag": self.etag,
-            "size": self.size,
-            "last_modified": _iso(self.last_modified),
-        }
-
-
-def _iso(value: datetime) -> str:
-    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
-
-
-def _parse_utc(value: Any, code: str) -> datetime:
-    if not isinstance(value, str):
-        raise ValueError(code)
-    text = value.strip()
-    if text.endswith("Z"):
-        text = f"{text[:-1]}+00:00"
-    try:
-        parsed = datetime.fromisoformat(text)
-    except ValueError as exc:
-        raise ValueError(code) from exc
-    if parsed.tzinfo is None or parsed.utcoffset() is None:
-        raise ValueError(code)
-    return parsed.astimezone(timezone.utc)
-
-
-def _etag(value: str) -> str:
-    return value.strip().removeprefix("W/").strip().strip('"')
-
-
-def _local_name(tag: str) -> str:
-    return tag.rsplit("}", 1)[-1]
-
-
-def _origin(request: RunRequest) -> datetime:
-    try:
-        value = pd.Timestamp(request.origin)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("noaa_gfs_request_invalid") from exc
-    if value.tzinfo is None or value.minute or value.second or value.microsecond:
-        raise ValueError("noaa_gfs_request_invalid")
-    if request.horizon not in (24, 48):
-        raise ValueError("noaa_gfs_request_invalid")
-    return value.tz_convert("UTC").to_pydatetime()
-
-
-def _selected_run(origin: datetime) -> datetime:
-    safe_time = origin - timedelta(hours=12)
-    cycle_hour = (safe_time.hour // 6) * 6
-    return safe_time.replace(hour=cycle_hour, minute=0, second=0, microsecond=0)
-
-
-def _prefix(run: datetime) -> str:
-    return f"gfs.{run:%Y%m%d}/{run:%H}/atmos/gfs.t{run:%H}z.pgrb2.0p25.f"
-
-
-def _forecast_key(run: datetime, lead: int) -> str:
-    return f"{_prefix(run)}{lead:03d}"
-
-
-def _make_message(body: bytes) -> None:
-    """Validate one complete GRIB1/2 message and its self-reported length."""
-    if len(body) < 12 or body[:4] != b"GRIB" or body[-4:] != b"7777":
-        raise ValueError("noaa_gfs_grib_message_invalid")
-    if body[7] == 2 and len(body) >= 20:
-        declared_length = int.from_bytes(body[8:16], "big")
-    elif body[7] == 1:
-        declared_length = int.from_bytes(body[4:7], "big")
-    else:
-        raise ValueError("noaa_gfs_grib_message_invalid")
-    if declared_length != len(body) or len(body) > MAX_GRIB_MESSAGE_BYTES:
-        raise ValueError("noaa_gfs_grib_message_invalid")
-
-
-class _EcCodesDecoder:
-    """Small adapter over ecCodes' public in-memory message API."""
-
-    def decode(
-        self, message: bytes, coordinates: tuple[tuple[str, float, float], ...]
-    ) -> dict[str, Any]:
-        try:
-            import eccodes
-        except ImportError as exc:  # pragma: no cover - exercised in deployments without ecCodes
-            raise ValueError("noaa_gfs_eccodes_unavailable") from exc
-
-        handle = None
-        try:
-            handle = eccodes.codes_new_from_message(message)
-            get = eccodes.codes_get
-            decoded: dict[str, Any] = {
-                "short_name": str(get(handle, "shortName")),
-                "type_of_level": str(get(handle, "typeOfLevel")),
-                "level": float(get(handle, "level")),
-                "units": str(get(handle, "units")),
-                "data_date": int(get(handle, "dataDate")),
-                "data_time": int(get(handle, "dataTime")),
-                "validity_date": int(get(handle, "validityDate")),
-                "validity_time": int(get(handle, "validityTime")),
-                "forecast_time": int(get(handle, "forecastTime")),
-                "step_units": get(handle, "stepUnits"),
-                "points": [],
-            }
-            for _turbine_id, latitude, longitude in coordinates:
-                nearest = eccodes.codes_grib_find_nearest(handle, latitude, longitude)
-                if not nearest:
-                    raise ValueError("noaa_gfs_grid_point_missing")
-                point = nearest[0]
-                if isinstance(point, dict):
-                    point_lat, point_lon, point_value = point["lat"], point["lon"], point["value"]
-                else:  # Compatibility with ecCodes versions returning a flat tuple.
-                    point_lat, point_lon, point_value = point[0], point[1], point[2]
-                decoded["points"].append(
-                    {
-                        "latitude": float(point_lat),
-                        "longitude": float(point_lon),
-                        "value": float(point_value),
-                    }
-                )
-            return decoded
-        except ValueError:
-            raise
-        except Exception as exc:
-            raise ValueError("noaa_gfs_grib_decode_failed") from exc
-        finally:
-            if handle is not None:
-                eccodes.codes_release(handle)
+def _same_objects(cached: Any, current: list[dict[str, Any]]) -> bool:
+    if not isinstance(cached, list) or len(cached) != len(current):
+        return False
+    return sorted(cached, key=lambda item: item.get("key", "")) == sorted(
+        current, key=lambda item: item.get("key", "")
+    )
 
 
 class NoaaGfsWeatherProvider:
@@ -236,6 +76,7 @@ class NoaaGfsWeatherProvider:
         self.cache_dir = Path(cache_dir)
         self.transport = transport if transport is not None else requests.Session()
         self.decoder = decoder if decoder is not None else _EcCodesDecoder()
+        self.archive = NoaaGfsArchive(self.transport)
 
     @staticmethod
     def _cache_identity(request: RunRequest, run: datetime) -> dict[str, Any]:
@@ -324,320 +165,15 @@ class NoaaGfsWeatherProvider:
         if cached is not None and not refresh:
             return cached
 
-        objects = self._list_required_objects(run, origin, request.horizon)
+        objects = self.archive.list_required_objects(run, origin, request.horizon)
         evidence = [item.evidence() for item in objects]
-        if cached is not None and self._same_objects(cached.provenance.get("objects"), evidence):
+        if cached is not None and _same_objects(cached.provenance.get("objects"), evidence):
             return cached
 
         snapshot = self._build_snapshot(request, run, objects)
         self._validate_snapshot(snapshot, request, run)
         self._store_cache(request, run, snapshot)
         return snapshot
-
-    def _request_bytes(
-        self,
-        url: str,
-        *,
-        params: dict[str, Any] | None = None,
-        headers: dict[str, str] | None = None,
-        max_bytes: int,
-        expected_etag: str | None = None,
-        expected_range: tuple[int, int, int] | None = None,
-        expected_size: int | None = None,
-        error_code: str,
-    ) -> bytes:
-        last_error: Exception | None = None
-        for attempt in range(MAX_HTTP_ATTEMPTS):
-            response = None
-            try:
-                response = self.transport.get(
-                    url,
-                    params=params,
-                    headers=headers or {},
-                    timeout=HTTP_TIMEOUT,
-                    stream=True,
-                )
-                status = int(getattr(response, "status_code", 200))
-                if status in (429, 500, 502, 503, 504):
-                    self._close(response)
-                    if attempt + 1 < MAX_HTTP_ATTEMPTS:
-                        time.sleep(0.05 * (attempt + 1))
-                        continue
-                    raise ValueError(error_code)
-                if expected_range is not None and status != 206:
-                    # In particular, reject HTTP 200 before reading a full GRIB file.
-                    raise ValueError("noaa_gfs_range_response_invalid")
-                if expected_range is None and status != 200:
-                    raise ValueError(error_code)
-
-                response_headers = getattr(response, "headers", {}) or {}
-                if (
-                    expected_etag is not None
-                    and _etag(str(response_headers.get("ETag", ""))) != expected_etag
-                ):
-                    code = (
-                        "noaa_gfs_range_response_invalid"
-                        if expected_range is not None
-                        else "noaa_gfs_object_version_mismatch"
-                    )
-                    raise ValueError(code)
-                if expected_range is not None:
-                    start, end, total = expected_range
-                    match = _CONTENT_RANGE_RE.fullmatch(
-                        str(response_headers.get("Content-Range", ""))
-                    )
-                    if (
-                        match is None
-                        or tuple(int(value) for value in match.groups()) != (start, end, total)
-                    ):
-                        raise ValueError("noaa_gfs_range_response_invalid")
-
-                body = self._read_bounded(response, max_bytes)
-                if (
-                    expected_range is not None
-                    and len(body) != expected_range[1] - expected_range[0] + 1
-                ):
-                    raise ValueError("noaa_gfs_range_response_invalid")
-                if expected_size is not None and len(body) != expected_size:
-                    raise ValueError(error_code)
-                return body
-            except requests.RequestException as exc:
-                last_error = exc
-                if attempt + 1 < MAX_HTTP_ATTEMPTS:
-                    time.sleep(0.05 * (attempt + 1))
-                    continue
-                raise ValueError(error_code) from exc
-            finally:
-                if response is not None:
-                    self._close(response)
-        raise ValueError(error_code) from last_error
-
-    @staticmethod
-    def _close(response: Any) -> None:
-        close = getattr(response, "close", None)
-        if callable(close):
-            close()
-
-    @staticmethod
-    def _read_bounded(response: Any, maximum: int) -> bytes:
-        chunks: list[bytes] = []
-        total = 0
-        iterator = getattr(response, "iter_content", None)
-        if callable(iterator):
-            for chunk in iterator(chunk_size=64 * 1024):
-                if not chunk:
-                    continue
-                total += len(chunk)
-                if total > maximum:
-                    raise ValueError("noaa_gfs_response_too_large")
-                chunks.append(bytes(chunk))
-        else:
-            body = getattr(response, "content", b"")
-            if not isinstance(body, bytes) or len(body) > maximum:
-                raise ValueError("noaa_gfs_response_too_large")
-            chunks.append(body)
-        return b"".join(chunks)
-
-    def _list_required_objects(
-        self, run: datetime, origin: datetime, horizon: int
-    ) -> list[_ObjectMetadata]:
-        prefix = _prefix(run)
-        continuation: str | None = None
-        seen_tokens: set[str] = set()
-        listed: dict[str, _ObjectMetadata] = {}
-        for _page in range(20):
-            params: dict[str, Any] = {"list-type": "2", "prefix": prefix, "max-keys": "1000"}
-            if continuation is not None:
-                params["continuation-token"] = continuation
-            body = self._request_bytes(
-                NOAA_GFS_BUCKET_URL,
-                params=params,
-                max_bytes=MAX_LIST_BYTES,
-                error_code="noaa_gfs_listing_invalid",
-            )
-            try:
-                root = ET.fromstring(body)
-            except ET.ParseError as exc:
-                raise ValueError("noaa_gfs_listing_invalid") from exc
-            contents = [node for node in root.iter() if _local_name(node.tag) == "Contents"]
-            for content in contents:
-                values: dict[str, str] = {}
-                for child in content:
-                    values[_local_name(child.tag)] = (child.text or "").strip()
-                key = values.get("Key", "")
-                try:
-                    obj = _ObjectMetadata(
-                        key=key,
-                        etag=_etag(values["ETag"]),
-                        size=int(values["Size"]),
-                        last_modified=_parse_utc(
-                            values["LastModified"], "noaa_gfs_listing_invalid"
-                        ),
-                    )
-                except (KeyError, TypeError, ValueError) as exc:
-                    raise ValueError("noaa_gfs_listing_invalid") from exc
-                if (
-                    not key.startswith(prefix)
-                    or not obj.etag
-                    or obj.size <= 0
-                    or key in listed
-                ):
-                    raise ValueError("noaa_gfs_listing_invalid")
-                listed[key] = obj
-
-            truncated_values = [
-                (node.text or "").strip().lower()
-                for node in root.iter()
-                if _local_name(node.tag) == "IsTruncated"
-            ]
-            if truncated_values != ["true"]:
-                if truncated_values != ["false"]:
-                    raise ValueError("noaa_gfs_listing_invalid")
-                break
-            tokens = [
-                (node.text or "").strip()
-                for node in root.iter()
-                if _local_name(node.tag) == "NextContinuationToken"
-            ]
-            if len(tokens) != 1 or not tokens[0] or tokens[0] in seen_tokens:
-                raise ValueError("noaa_gfs_listing_invalid")
-            continuation = tokens[0]
-            seen_tokens.add(continuation)
-        else:
-            raise ValueError("noaa_gfs_listing_invalid")
-
-        expected: list[_ObjectMetadata] = []
-        first_lead = int((origin - run).total_seconds() // 3600)
-        for lead in range(first_lead, first_lead + horizon):
-            grib_key = _forecast_key(run, lead)
-            for key in (grib_key, f"{grib_key}.idx"):
-                metadata = listed.get(key)
-                if metadata is None:
-                    raise ValueError("noaa_gfs_object_missing")
-                if metadata.last_modified < run or metadata.last_modified > origin:
-                    raise ValueError("noaa_gfs_object_time_invalid")
-                expected.append(metadata)
-        return expected
-
-    @staticmethod
-    def _same_objects(cached: Any, current: list[dict[str, Any]]) -> bool:
-        if not isinstance(cached, list) or len(cached) != len(current):
-            return False
-        return sorted(cached, key=lambda item: item.get("key", "")) == sorted(
-            current, key=lambda item: item.get("key", "")
-        )
-
-    def _read_index(
-        self, metadata: _ObjectMetadata, grib_object_size: int
-    ) -> tuple[bytes, list[dict[str, Any]]]:
-        url = NOAA_GFS_BUCKET_URL + quote(metadata.key, safe="/")
-        body = self._request_bytes(
-            url,
-            headers={"If-Match": f'"{metadata.etag}"'},
-            max_bytes=MAX_INDEX_BYTES,
-            expected_etag=metadata.etag,
-            expected_size=metadata.size,
-            error_code="noaa_gfs_index_response_invalid",
-        )
-        return body, self._parse_index(body, grib_object_size)
-
-    @staticmethod
-    def _parse_index(body: bytes, object_size: int) -> list[dict[str, Any]]:
-        try:
-            text = body.decode("utf-8", errors="strict")
-        except UnicodeDecodeError as exc:
-            raise ValueError("noaa_gfs_index_invalid") from exc
-        lines = text.splitlines()
-        if not lines or len(lines) > 10000:
-            raise ValueError("noaa_gfs_index_invalid")
-        records: list[dict[str, Any]] = []
-        previous_number = 0
-        previous_offset = -1
-        for line in lines:
-            if not line or len(line) > 4096:
-                raise ValueError("noaa_gfs_index_invalid")
-            parts = line.split(":", 5)
-            if len(parts) != 6:
-                raise ValueError("noaa_gfs_index_invalid")
-            try:
-                number, offset = int(parts[0]), int(parts[1])
-            except ValueError as exc:
-                raise ValueError("noaa_gfs_index_invalid") from exc
-            if (
-                number <= previous_number
-                or offset <= previous_offset
-                or offset < 0
-                or offset >= object_size
-                or not parts[2].startswith("d=")
-                or not parts[3]
-                or not parts[4]
-            ):
-                raise ValueError("noaa_gfs_index_offset_invalid")
-            records.append(
-                {
-                    "number": number,
-                    "offset": offset,
-                    "reference_time": parts[2][2:],
-                    "name": parts[3],
-                    "level": parts[4],
-                    "description": parts[5],
-                }
-            )
-            previous_number, previous_offset = number, offset
-        if records[0]["offset"] != 0:
-            raise ValueError("noaa_gfs_index_offset_invalid")
-        return records
-
-    @staticmethod
-    def _select_index_records(
-        records: list[dict[str, Any]], run: datetime, object_size: int
-    ) -> dict[tuple[str, str], tuple[int, int, dict[str, Any]]]:
-        selected: dict[tuple[str, str], dict[str, Any]] = {}
-        for record in records:
-            if record["reference_time"] != run.strftime("%Y%m%d%H"):
-                raise ValueError("noaa_gfs_index_run_mismatch")
-            pair = (record["name"], record["level"])
-            if pair in {(field.index_name, field.index_level) for field in _FIELD_SPECS}:
-                if pair in selected:
-                    raise ValueError("noaa_gfs_index_duplicate_field")
-                selected[pair] = record
-        wanted = {(field.index_name, field.index_level) for field in _FIELD_SPECS}
-        if set(selected) != wanted:
-            raise ValueError("noaa_gfs_index_field_missing")
-        offsets = [record["offset"] for record in records]
-        boundaries = {
-            offset: offsets[index + 1] if index + 1 < len(offsets) else object_size
-            for index, offset in enumerate(offsets)
-        }
-        result: dict[tuple[str, str], tuple[int, int, dict[str, Any]]] = {}
-        for pair, record in selected.items():
-            start = record["offset"]
-            end = boundaries[start]
-            if end <= start or end - start > MAX_GRIB_MESSAGE_BYTES:
-                raise ValueError("noaa_gfs_index_offset_invalid")
-            result[pair] = (start, end - 1, record)
-        return result
-
-    def _read_range(
-        self,
-        metadata: _ObjectMetadata,
-        start: int,
-        end: int,
-    ) -> bytes:
-        url = NOAA_GFS_BUCKET_URL + quote(metadata.key, safe="/")
-        body = self._request_bytes(
-            url,
-            headers={
-                "Range": f"bytes={start}-{end}",
-                "If-Match": f'"{metadata.etag}"',
-            },
-            max_bytes=MAX_GRIB_MESSAGE_BYTES,
-            expected_etag=metadata.etag,
-            expected_range=(start, end, metadata.size),
-            error_code="noaa_gfs_range_response_invalid",
-        )
-        _make_message(body)
-        return body
 
     def _decode_field(
         self,
@@ -723,7 +259,7 @@ class NoaaGfsWeatherProvider:
         self,
         request: RunRequest,
         run: datetime,
-        objects: list[_ObjectMetadata],
+        objects: list[ObjectMetadata],
     ) -> WeatherSnapshot:
         origin = _origin(request)
         object_by_key = {item.key: item for item in objects}
@@ -735,13 +271,13 @@ class NoaaGfsWeatherProvider:
             grib_key = _forecast_key(run, lead)
             grib_metadata = object_by_key[grib_key]
             index_metadata = object_by_key[f"{grib_key}.idx"]
-            index_bytes, index_records = self._read_index(index_metadata, grib_metadata.size)
+            index_bytes, index_records = self.archive.read_index(index_metadata, grib_metadata.size)
             index_sha256 = hashlib.sha256(index_bytes).hexdigest()
-            indexed = self._select_index_records(index_records, run, grib_metadata.size)
+            indexed = self.archive.select_index_records(index_records, run, grib_metadata.size)
             by_output: dict[str, dict[str, Any]] = {}
             for field in _FIELD_SPECS:
                 start, end, index_record = indexed[(field.index_name, field.index_level)]
-                message = self._read_range(grib_metadata, start, end)
+                message = self.archive.read_range(grib_metadata, start, end)
                 decoded = self._decode_field(message, field, run, valid_time, lead)
                 by_output[field.output_variable] = decoded
                 field_evidence.append(

@@ -1,5 +1,5 @@
 ---
-import { Stat } from '@santi020k/lumen-astro';
+import { Icon, Stat } from '@santi020k/lumen-astro';
 
 interface Props {
   label: string;
@@ -9,6 +9,16 @@ interface Props {
 }
 
 const { label, value, name, labelKey } = Astro.props;
+const icons = { horizon: 'calendar-days', weather: 'cloud-sun', turbines: 'wind', status: 'activity' } as const;
+const icon = icons[name as keyof typeof icons] ?? 'activity';
 ---
 
-<Stat class="metric-card" data-stat={name} data-l10n-stat-label={labelKey} label={label} value={value} />
+<Stat class="metric-card" data-stat={name} data-l10n-stat-label={labelKey} label={label} value={value}>
+  <span class="metric-icon" aria-hidden="true"><Icon name={icon} size="sm" /></span>
+</Stat>
+
+<style>
+  .metric-card { position: relative; padding-left: 68px; }
+  .metric-icon { position: absolute; left: 16px; top: 50%; transform: translateY(-50%); display: grid; place-items: center; width: 38px; height: 38px; border-radius: 10px; background: hsl(var(--brand-soft)); color: hsl(var(--brand)); }
+  @media (max-width: 560px) { .metric-card { padding-left: 52px; } .metric-icon { left: 10px; width: 30px; height: 34px; } }
+</style>

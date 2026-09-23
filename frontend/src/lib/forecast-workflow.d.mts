@@ -1,6 +1,7 @@
 import type { ApiJobError, DashboardWorkflow, JobView, RunView } from './types.js';
 
 export class ApiResponseError extends Error {
+  constructor(message: string, code?: string, status?: number);
   code: string;
   status: number;
 }

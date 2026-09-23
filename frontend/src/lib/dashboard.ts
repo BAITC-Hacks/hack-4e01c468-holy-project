@@ -1,27 +1,24 @@
 import { getForecastJob, getHealth, getLatestRun, submitForecast } from './api';
-import { applyJobSnapshot } from './forecast-workflow.mjs';
+import { ApiResponseError, applyJobSnapshot } from './forecast-workflow.mjs';
+import { apiErrorMessage, formatAlmatyDateTime, parseAlmatyDateTime } from './dashboard-model.mjs';
 import { renderAgentTrace } from '../features/agent-trace/render';
 import { renderBacktest } from '../features/backtest/render';
 import { renderDataQuality } from '../features/data-quality/render';
 import { renderForecastViews } from '../features/forecast/render';
+import { readLocale, readTheme, resolveTheme, saveLocale, text, toggleTheme } from './preferences.mjs';
 import type { DashboardWorkflow, ForecastRequest, HealthView, RunView } from './types';
 
 const pollDelayMs = 2_000;
 const maxPollsPerAttempt = 120;
 
-function localInputValue(date: Date): string {
-  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
-  return local.toISOString().slice(0, 16);
+function errorCode(error: unknown): string {
+  return error instanceof ApiResponseError ? error.code : 'request_failed';
 }
 
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : 'The request could not be completed. Retry when the API is available.';
-}
-
-function setApiStatus(connected: boolean, label: string): void {
-  const text = document.querySelector<HTMLElement>('[data-api-status]');
+function setApiStatus(connected: boolean, labelKey: string, locale: 'ru' | 'kk'): void {
+  const status = document.querySelector<HTMLElement>('[data-api-status]');
   const dot = document.querySelector<HTMLElement>('[data-connection-dot]');
-  if (text) text.textContent = label;
+  if (status) status.textContent = text(locale, labelKey);
   if (dot) dot.dataset.connected = String(connected);
 }
 
@@ -47,30 +44,79 @@ function setRecovery(form: HTMLFormElement, visible: boolean, busy: boolean): vo
   if (button) button.disabled = !visible || busy;
 }
 
-function updateViews(run: RunView | null, health: HealthView | null, latestFailure: string | null): void {
-  renderForecastViews(run, health, latestFailure);
-  renderBacktest(run);
-  renderAgentTrace(run);
-  renderDataQuality(run, health);
+function updateViews(run: RunView | null, health: HealthView | null, latestFailure: string | null, locale: 'ru' | 'kk'): void {
+  renderForecastViews(run, health, latestFailure, locale);
+  renderBacktest(run, locale);
+  renderAgentTrace(run, locale);
+  renderDataQuality(run, health, locale);
 }
 
-function currentRunMessage(state: DashboardWorkflow): { message: string; outcome: 'info' | 'success' | 'warning' | 'failed' } {
+function currentRunMessage(state: DashboardWorkflow, locale: 'ru' | 'kk'): { message: string; outcome: 'info' | 'success' | 'warning' | 'failed' } {
   const job = state.job;
-  if (!job) return { message: 'Preparing forecast request…', outcome: 'info' };
-  if (job.state === 'queued') return { message: 'Forecast queued. Waiting for the local worker.', outcome: 'info' };
-  if (job.state === 'running') return { message: 'Forecast is running. This page will update when the run finishes.', outcome: 'info' };
-  if (job.state === 'failed') return { message: job.error?.message ?? 'The forecast job failed.', outcome: 'failed' };
-  if (job.result?.status === 'failed') return { message: 'The run completed with a failed forecast status. Its details remain selected below.', outcome: 'failed' };
-  if (job.result?.reused) return { message: 'The API reused the saved run because forecast inputs and weather were unchanged.', outcome: 'success' };
-  return { message: 'Forecast finished. The returned run is selected below.', outcome: 'success' };
+  if (!job) return { message: text(locale, 'requestPreparing'), outcome: 'info' };
+  if (job.state === 'queued') return { message: text(locale, 'jobQueued'), outcome: 'info' };
+  if (job.state === 'running') return { message: text(locale, 'jobRunning'), outcome: 'info' };
+  if (job.state === 'failed') return { message: apiErrorMessage(job.error?.code ?? 'execution_error', locale), outcome: 'failed' };
+  if (job.result?.status === 'failed') return { message: text(locale, 'failedRunSelected'), outcome: 'failed' };
+  if (job.result?.reused) return { message: text(locale, 'reusedRun'), outcome: job.result.status === 'degraded' ? 'warning' : 'success' };
+  if (job.result?.status === 'degraded') return { message: text(locale, 'runDegraded'), outcome: 'warning' };
+  return { message: text(locale, 'forecastFinished'), outcome: 'success' };
 }
 
-function renderJobState(state: DashboardWorkflow, form: HTMLFormElement, paused: boolean, polling: boolean): void {
+function renderJobState(state: DashboardWorkflow, form: HTMLFormElement, paused: boolean, polling: boolean, locale: 'ru' | 'kk'): void {
   setFormBusy(form, state.active);
   setRecovery(form, state.active && paused, polling);
   if (state.job) {
-    const result = currentRunMessage(state);
-    setFeedback(form, paused ? 'Connection interrupted. Check the job status to continue.' : result.message, paused ? 'warning' : result.outcome);
+    const result = currentRunMessage(state, locale);
+    setFeedback(form, paused ? text(locale, 'connectionInterrupted') : result.message, paused ? 'warning' : result.outcome);
+  } else if (state.active) {
+    setFeedback(form, text(locale, 'requestSubmitting'), 'info');
+  }
+}
+
+function applyStaticTranslations(locale: 'ru' | 'kk', theme: 'light' | 'dark'): void {
+  document.documentElement.lang = locale;
+  for (const node of document.querySelectorAll<HTMLElement>('[data-i18n]')) {
+    const key = node.dataset.i18n;
+    if (key) node.textContent = text(locale, key);
+  }
+  for (const node of document.querySelectorAll<HTMLElement>('[data-i18n-aria]')) {
+    const key = node.dataset.i18nAria;
+    if (key) node.setAttribute('aria-label', text(locale, key));
+  }
+  for (const node of document.querySelectorAll<HTMLElement>('[data-i18n-title]')) {
+    const key = node.dataset.i18nTitle;
+    if (key) node.title = text(locale, key);
+  }
+  for (const node of document.querySelectorAll<HTMLElement>('[data-l10n-stat-label]')) {
+    const key = node.dataset.l10nStatLabel;
+    const label = node.querySelector<HTMLElement>('[data-slot="stat-label"]');
+    if (key && label) label.textContent = text(locale, key);
+  }
+  const boundary = document.querySelector<HTMLElement>('[data-i18n="hourlyBoundary"]');
+  if (boundary) boundary.textContent = text(locale, 'hourlyBoundary', { timezone: 'UTC+05' });
+  const timezone = document.querySelector<HTMLElement>('[data-local-timezone]');
+  if (timezone) timezone.textContent = 'Asia/Almaty';
+  const horizon = document.querySelector<HTMLSelectElement>('select[name="horizon"]');
+  if (horizon) {
+    const option24 = horizon.querySelector<HTMLOptionElement>('option[value="24"]');
+    const option48 = horizon.querySelector<HTMLOptionElement>('option[value="48"]');
+    if (option24) option24.textContent = text(locale, 'hours24');
+    if (option48) option48.textContent = text(locale, 'hours48');
+  }
+  const title = document.querySelector<HTMLElement>('title');
+  if (title) title.textContent = text(locale, 'appTitle');
+  const description = document.querySelector<HTMLMetaElement>('meta[name="description"]');
+  if (description) description.content = text(locale, 'appDescription');
+
+  for (const button of document.querySelectorAll<HTMLButtonElement>('[data-locale-switch]')) {
+    button.setAttribute('aria-pressed', String(button.dataset.localeSwitch === locale));
+  }
+  const themeButton = document.querySelector<HTMLButtonElement>('[data-theme-toggle]');
+  if (themeButton) {
+    themeButton.setAttribute('aria-label', text(locale, theme === 'dark' ? 'switchToLight' : 'switchToDark'));
+    themeButton.setAttribute('aria-pressed', String(theme === 'dark'));
+    themeButton.dataset.currentTheme = theme;
   }
 }
 
@@ -93,17 +139,35 @@ function observeCurrentSection(): void {
 }
 
 export function startDashboard(): void {
-  const form = document.querySelector<HTMLFormElement>('#forecast-form');
-  if (!form) return;
+  if (typeof window === 'undefined' || typeof document === 'undefined') return;
+  const formElement = document.querySelector<HTMLFormElement>('#forecast-form');
+  if (!formElement) return;
+  const form: HTMLFormElement = formElement;
+
+  let storage: Storage | null = null;
+  try {
+    storage = window.localStorage;
+  } catch {
+    // User preferences remain active for this visit if browser storage is blocked.
+  }
+  let locale = readLocale(storage);
+  let themePreference = readTheme(storage);
+  const colorScheme = window.matchMedia('(prefers-color-scheme: dark)');
+  let theme = resolveTheme(themePreference, colorScheme.matches);
+  document.documentElement.dataset.theme = theme;
 
   const origin = form.elements.namedItem('origin') as HTMLInputElement | null;
-  if (origin) origin.value = localInputValue(new Date(Math.floor(Date.now() / 3_600_000) * 3_600_000));
-  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const zoneLabel = document.querySelector<HTMLElement>('[data-timezone]');
-  if (zoneLabel) zoneLabel.textContent = timeZone || 'local timezone';
+  if (origin) origin.value = formatAlmatyDateTime(new Date(Math.floor(Date.now() / 3_600_000) * 3_600_000));
+  let formTouched = false;
+  form.addEventListener('input', () => { formTouched = true; });
+  form.addEventListener('change', () => { formTouched = true; });
 
   let health: HealthView | null = null;
   let latestFailure: string | null = null;
+  let requestFailure: string | null = null;
+  let validationMessageKey: string | null = null;
+  let apiStatusKey = 'connecting';
+  let apiConnected = false;
   let paused = false;
   let polling = false;
   let workflow: DashboardWorkflow = {
@@ -115,26 +179,70 @@ export function startDashboard(): void {
   const latestRetry = document.querySelector<HTMLButtonElement>('[data-latest-retry]');
   const jobRetry = form.querySelector<HTMLButtonElement>('[data-job-retry]');
 
-  const render = (): void => {
-    updateViews(workflow.selectedRun, health, latestFailure);
-    renderJobState(workflow, form, paused, polling);
+  const updateApiStatus = (connected: boolean, key: string): void => {
+    apiConnected = connected;
+    apiStatusKey = key;
+    setApiStatus(connected, key, locale);
   };
+
+  const render = (): void => {
+    updateApiStatus(apiConnected, apiStatusKey);
+    updateViews(workflow.selectedRun, health, latestFailure, locale);
+    renderJobState(workflow, form, paused, polling, locale);
+    if (requestFailure && !workflow.job) setFeedback(form, apiErrorMessage(requestFailure, locale), 'failed');
+    else if (validationMessageKey) setFeedback(form, text(locale, validationMessageKey), 'warning');
+  };
+
+  const localize = (): void => {
+    applyStaticTranslations(locale, theme);
+    render();
+  };
+
+  applyStaticTranslations(locale, theme);
+  for (const button of document.querySelectorAll<HTMLButtonElement>('[data-locale-switch]')) {
+    button.addEventListener('click', () => {
+      locale = button.dataset.localeSwitch === 'kk' ? 'kk' : 'ru';
+      saveLocale(locale, storage);
+      localize();
+    });
+  }
+  const themeButton = document.querySelector<HTMLButtonElement>('[data-theme-toggle]');
+  themeButton?.addEventListener('click', () => {
+    theme = toggleTheme(theme, storage);
+    themePreference = theme;
+    document.documentElement.dataset.theme = theme;
+    localize();
+  });
+  colorScheme.addEventListener('change', (event) => {
+    if (themePreference !== 'system') return;
+    theme = resolveTheme('system', event.matches);
+    document.documentElement.dataset.theme = theme;
+    localize();
+  });
 
   async function loadLatest(): Promise<void> {
     if (latestRetry) latestRetry.hidden = true;
-    setApiStatus(false, 'Connecting');
+    updateApiStatus(false, 'connecting');
     try {
       health = await getHealth();
       const run = await getLatestRun();
+      if (run && !formTouched) {
+        const savedOrigin = run.manifest.forecast_origin ?? run.forecast[0]?.forecast_origin;
+        if (origin && typeof savedOrigin === 'string') origin.value = formatAlmatyDateTime(new Date(savedOrigin));
+        const horizon = form.elements.namedItem('horizon') as HTMLSelectElement | null;
+        if (horizon && (run.manifest.horizon === 24 || run.manifest.horizon === 48)) horizon.value = String(run.manifest.horizon);
+      }
       latestFailure = null;
+      requestFailure = null;
+      validationMessageKey = null;
       workflow = { ...workflow, selectedRun: run, job: null, active: false };
-      setApiStatus(true, 'Connected');
+      updateApiStatus(true, 'connected');
       render();
     } catch (error) {
-      latestFailure = errorText(error);
+      latestFailure = errorCode(error);
       workflow = { ...workflow, selectedRun: null, job: null, active: false };
       if (latestRetry) latestRetry.hidden = false;
-      setApiStatus(false, 'Unavailable');
+      updateApiStatus(false, 'apiUnavailable');
       render();
     }
   }
@@ -143,14 +251,14 @@ export function startDashboard(): void {
     if (polling) return;
     polling = true;
     paused = false;
-    renderJobState(workflow, form, paused, polling);
+    renderJobState(workflow, form, paused, polling, locale);
     for (let attempt = 0; attempt < maxPollsPerAttempt; attempt += 1) {
       await new Promise<void>((resolve) => window.setTimeout(resolve, pollDelayMs));
       try {
         const snapshot = await getForecastJob(jobId);
         workflow = applyJobSnapshot(workflow, snapshot);
         latestFailure = null;
-        setApiStatus(true, 'Connected');
+        updateApiStatus(true, 'connected');
         render();
         if (!workflow.active) {
           polling = false;
@@ -161,7 +269,7 @@ export function startDashboard(): void {
       } catch {
         polling = false;
         paused = true;
-        setApiStatus(false, 'Status interrupted');
+        updateApiStatus(false, 'apiInterrupted');
         render();
         return;
       }
@@ -173,14 +281,22 @@ export function startDashboard(): void {
 
   form.addEventListener('submit', async (event: SubmitEvent) => {
     event.preventDefault();
-    if (workflow.active || !form.reportValidity()) return;
+    if (workflow.active) return;
     const originInput = form.elements.namedItem('origin') as HTMLInputElement | null;
     const horizonInput = form.elements.namedItem('horizon') as HTMLSelectElement | null;
+    if (!form.reportValidity()) {
+      if (originInput && !originInput.validity.valid) {
+        validationMessageKey = 'invalidOrigin';
+        setFeedback(form, text(locale, validationMessageKey), 'warning');
+      }
+      return;
+    }
     const intent = (event.submitter as HTMLButtonElement | null)?.value;
     const localOrigin = originInput?.value ?? '';
-    const utcOrigin = new Date(localOrigin);
-    if (!localOrigin || !Number.isFinite(utcOrigin.getTime())) {
-      setFeedback(form, 'Choose a valid hourly origin before submitting.', 'warning');
+    const utcOrigin = parseAlmatyDateTime(localOrigin);
+    if (!utcOrigin) {
+      validationMessageKey = 'invalidOrigin';
+      setFeedback(form, text(locale, validationMessageKey), 'warning');
       originInput?.focus();
       return;
     }
@@ -192,24 +308,26 @@ export function startDashboard(): void {
     };
     workflow = { form: request, selectedRun: null, job: null, active: true };
     latestFailure = null;
+    requestFailure = null;
+    validationMessageKey = null;
     paused = false;
     polling = false;
-    updateViews(null, health, null);
-    setFeedback(form, 'Submitting forecast request…', 'info');
-    renderJobState(workflow, form, paused, polling);
+    updateViews(null, health, null, locale);
+    setFeedback(form, text(locale, 'requestSubmitting'), 'info');
+    renderJobState(workflow, form, paused, polling, locale);
 
     try {
       const firstSnapshot = await submitForecast(request);
       workflow = applyJobSnapshot(workflow, firstSnapshot);
-      setApiStatus(true, 'Connected');
+      updateApiStatus(true, 'connected');
       render();
       if (workflow.active) await pollJob(firstSnapshot.job_id);
       else render();
     } catch (error) {
       workflow = { ...workflow, active: false, job: null, selectedRun: null };
-      setApiStatus(false, 'Request failed');
+      requestFailure = errorCode(error);
+      updateApiStatus(false, 'apiRequestFailed');
       render();
-      setFeedback(form, errorText(error), 'failed');
     }
   });
 

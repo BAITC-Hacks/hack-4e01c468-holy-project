@@ -3,7 +3,7 @@ import { Badge, Card, Empty, Icon, Table } from '@santi020k/lumen-astro';
 import SectionHeader from '../../components/SectionHeader.astro';
 import { text } from '../../lib/preferences.mjs';
 
-const t = (key: string) => text('ru', key);
+const t = (key: Parameters<typeof text>[1]) => text('ru', key);
 ---
 
 <section id="backtest" class="section-block supporting-section" aria-labelledby="backtest-title">
@@ -27,10 +27,12 @@ const t = (key: string) => text('ru', key);
         <p data-i18n="historicalMetricsAppear">{t('historicalMetricsAppear')}</p>
       </Empty>
       <div class="metrics-table-scroll" data-backtest-table-wrap hidden>
-        <Table class="metrics-table">
+        <Table>
+          <table class="metrics-table">
           <caption data-i18n="historicalEvaluationCaption">{t('historicalEvaluationCaption')}</caption>
           <thead><tr><th scope="col" data-i18n="model">{t('model')}</th><th scope="col" data-i18n="scope">{t('scope')}</th><th scope="col">MAE</th><th scope="col">RMSE</th><th scope="col" data-i18n="intervalCoverage">{t('intervalCoverage')}</th><th scope="col" data-i18n="rows">{t('rows')}</th></tr></thead>
           <tbody data-backtest-rows></tbody>
+          </table>
         </Table>
       </div>
     </div>

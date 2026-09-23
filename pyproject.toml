@@ -22,6 +22,7 @@ dependencies = [
 [project.optional-dependencies]
 ml = ["catboost"]
 dev = ["pytest", "playwright", "httpx"]
+weather = ["eccodes"]
 
 [tool.setuptools.packages.find]
 include = ["wind_forecast*"]

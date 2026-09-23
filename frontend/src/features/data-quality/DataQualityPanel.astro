@@ -1,9 +1,9 @@
 ---
-import { Badge, Card, Empty, Icon, Skeleton } from '@santi020k/lumen-astro';
+import { Badge, Card, Icon, Skeleton } from '@santi020k/lumen-astro';
 import SectionHeader from '../../components/SectionHeader.astro';
 import { text } from '../../lib/preferences.mjs';
 
-const t = (key: string) => text('ru', key);
+const t = (key: Parameters<typeof text>[1]) => text('ru', key);
 ---
 
 <section id="data-quality" class="section-block supporting-section" aria-labelledby="data-quality-title">

@@ -1,5 +1,8 @@
 /* Live-preview containment while the reference stylesheet is integrated. */
 img { max-width: 100%; }
+[hidden] { display: none !important; }
+.forecast-records-disclosure > summary { padding: 14px 18px; cursor: pointer; border: 1px solid hsl(var(--line)); border-radius: 10px; background: hsl(var(--surface)); }
+.forecast-records-disclosure[open] > summary { margin-bottom: 18px; }
 .workspace-main, .page-content, .dashboard-content, .forecast-grid > *, .supporting-grid > * { min-width: 0; }
 .page-content { padding: 24px 28px; max-width: 1500px; margin: 0 auto; }
 .dashboard-content { display: grid; gap: 24px; }

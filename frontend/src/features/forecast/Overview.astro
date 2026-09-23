@@ -5,7 +5,7 @@ import SectionHeader from '../../components/SectionHeader.astro';
 import StatusBadge from '../../components/StatusBadge.astro';
 import { text } from '../../lib/preferences.mjs';
 
-const t = (key: string) => text('ru', key);
+const t = (key: Parameters<typeof text>[1]) => text('ru', key);
 ---
 
 <section id="overview" class="overview-section" aria-labelledby="overview-title">

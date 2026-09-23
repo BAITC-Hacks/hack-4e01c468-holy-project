@@ -1,8 +1,8 @@
 # NOAA GFS point weather adapter
 
-`NoaaGfsWeatherProvider` is an opt-in weather source implementing the existing
-`fetch(request, refresh=False)` / `read_cached(request)` shape. It is not wired
-into application configuration or the service composition root yet.
+`NoaaGfsWeatherProvider` implements the existing
+`fetch(request, refresh=False)` / `read_cached(request)` shape and can be
+selected through the application settings. Open-Meteo remains the default.
 
 The source is NOAA's public `noaa-gfs-bdp-pds` S3 bucket. The [AWS Open Data
 Registry entry](https://registry.opendata.aws/noaa-gfs-bdp-pds/) describes GFS
@@ -68,6 +68,18 @@ evidence, row values, or weather contract no longer validate. A refresh checks
 current S3 object versions and reuses the point extract if every required
 object version is unchanged.
 
+Install the optional decoder dependency and select GFS with environment
+configuration:
+
+```sh
+pip install -e '.[weather]'
+export WEATHER_PROVIDER=noaa_gfs
+```
+
+The application cache directory controls where point extracts are kept. The
+provider setting can also be put in the project `.env` file. `WEATHER_PROVIDER`
+accepts only `openmeteo` and `noaa_gfs`.
+
 ```python
 from pathlib import Path
 
@@ -81,8 +93,21 @@ snapshot = provider.fetch(request)
 
 The default decoder lazily imports the public Python API from [ecCodes,
 developed by ECMWF](https://confluence.ecmwf.int/display/ECC/ecCodes+Home).
-The application does not currently select this provider automatically; source
-wiring, the first reviewed real forecast retrieval, and February metadata
-acceptance remain separate integration work. The existence of prior S3
-metadata probes alone is not proof that every requested hour is valid or
-available before a given origin.
+The dependency is optional for Open-Meteo users. The service keys weather
+caches, models, and backtest records by provider identity, so models trained
+with Open-Meteo are not reused for GFS and vice versa.
+
+Automatic model training can be disabled for a bounded live-weather smoke by
+setting `AUTO_TRAIN_MODEL=0`. In that mode the service loads a valid model for
+the current data and weather source if one exists. If not, it reports the
+model as unavailable to the forecasting workflow and uses the existing
+baseline fallback; an uncalibrated baseline is not evidence of CatBoost model
+readiness. Explicit CLI training remains available with
+`python -m wind_forecast.cli train` after confirming point-in-time weather
+availability and the desired historical range.
+
+Selecting GFS does not by itself establish competition readiness. Review the
+actual retrieval's decoded field metadata and archive publication evidence,
+then verify February object availability for every requested origin. S3
+`LastModified` is recorded only as a public archive publication bound; no
+February turbine truth or accuracy is inferred from weather coverage.

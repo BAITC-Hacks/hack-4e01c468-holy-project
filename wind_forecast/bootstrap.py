@@ -51,6 +51,12 @@ def build_runtime(
         selected_weather = SyntheticWeatherProvider()
     elif fixture_path is not None:
         selected_weather = FixtureWeatherProvider(fixture_path)
+    elif settings.weather_provider == "noaa_gfs":
+        from wind_forecast.infrastructure.weather.noaa_gfs import (
+            NoaaGfsWeatherProvider,
+        )
+
+        selected_weather = NoaaGfsWeatherProvider(settings.cache_dir)
     else:
         selected_weather = WeatherProvider(settings.cache_dir)
 

@@ -4,11 +4,13 @@ import math
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 from dotenv import load_dotenv
 
 from wind_forecast.contracts import RunMode
+
+WeatherProviderName = Literal["openmeteo", "noaa_gfs"]
 
 
 def _project_root() -> Path:
@@ -42,6 +44,8 @@ class Settings:
     openai_reasoning_effort: str = "none"
     http_timeout_seconds: float = 20.0
     mode: RunMode = "competition"
+    weather_provider: WeatherProviderName = "openmeteo"
+    auto_train_model: bool = True
 
     @classmethod
     def from_env(cls, root_dir: Path | None = None) -> "Settings":
@@ -59,6 +63,18 @@ class Settings:
         mode = os.environ.get("RUN_MODE", "competition").strip() or "competition"
         if mode not in ("competition", "demo"):
             raise ValueError("RUN_MODE must be 'competition' or 'demo'")
+
+        weather_provider = os.environ.get("WEATHER_PROVIDER", "openmeteo").strip().lower()
+        if weather_provider not in ("openmeteo", "noaa_gfs"):
+            raise ValueError("WEATHER_PROVIDER must be 'openmeteo' or 'noaa_gfs'")
+
+        auto_train_value = os.environ.get("AUTO_TRAIN_MODEL", "true").strip().lower()
+        if auto_train_value in ("1", "true", "yes", "on"):
+            auto_train_model = True
+        elif auto_train_value in ("0", "false", "no", "off"):
+            auto_train_model = False
+        else:
+            raise ValueError("AUTO_TRAIN_MODEL must be a boolean value")
 
         return cls(
             root_dir=root,
@@ -80,4 +96,6 @@ class Settings:
             or "none",
             http_timeout_seconds=timeout,
             mode=cast(RunMode, mode),
+            weather_provider=cast(WeatherProviderName, weather_provider),
+            auto_train_model=auto_train_model,
         )

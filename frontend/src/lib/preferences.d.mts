@@ -1,5 +1,10 @@
 export type Locale = 'ru' | 'kk';
 export type MessageKey =
+  | 'baselineDegradedAlert'
+  | 'eventCheckUpdates'
+  | 'eventQualityGate'
+  | 'eventAnalyze'
+  | 'eventContinue'
   | 'appTitle'
   | 'appDescription'
   | 'skipContent'
@@ -68,6 +73,7 @@ export type MessageKey =
   | 'forecastOrigin'
   | 'hourlyBoundary'
   | 'localTimezone'
+  | 'utc05'
   | 'horizonLabel'
   | 'hours24'
   | 'hours48'
@@ -83,6 +89,8 @@ export type MessageKey =
   | 'reusedRun'
   | 'forecastFinished'
   | 'connectionInterrupted'
+  | 'invalidRequest'
+  | 'jobAlreadyRunning'
   | 'invalidOrigin'
   | 'requestTimeout'
   | 'connectionError'
@@ -256,7 +264,7 @@ type StorageLike = Pick<Storage, 'getItem' | 'setItem'> | null | undefined;
 
 export const messages: Readonly<Record<Locale, Readonly<Record<MessageKey, string>>>>;
 export const defaultLocale: 'ru';
-export function text(locale: Locale, key: MessageKey, values?: Readonly<Record<string, string | number>>): string;
+export function text(locale: Locale, key: string, values?: Readonly<Record<string, string | number>>): string;
 export function readLocale(storage?: StorageLike): Locale;
 export function saveLocale(locale: Locale, storage?: StorageLike): void;
 export function readTheme(storage?: StorageLike): ThemePreference;

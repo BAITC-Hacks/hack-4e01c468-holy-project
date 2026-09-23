@@ -1,13 +1,17 @@
 import { escapeHtml } from '../forecast/chart.mjs';
-import { asRecord, displayValue, formatUtc, humanizeCode } from '../../lib/format';
+import { asRecord, displayValue, formatAlmaty } from '../../lib/format';
+import { eventActionLabel, eventOutcomeLabel } from '../../lib/dashboard-model.mjs';
+import { text } from '../../lib/preferences.mjs';
 import type { RunView } from '../../lib/types';
 
-export function renderAgentTrace(run: RunView | null): void {
+export function renderAgentTrace(run: RunView | null, locale: 'ru' | 'kk' = 'ru'): void {
   const list = document.querySelector<HTMLElement>('[data-event-list]');
   const empty = document.querySelector<HTMLElement>('[data-event-empty]');
   const summary = document.querySelector<HTMLElement>('[data-trace-summary]');
   const events = run?.events ?? [];
-  if (summary) summary.textContent = run ? `${events.length} recorded events · ${run.run_id}` : 'No selected run';
+  if (summary) summary.textContent = run
+    ? text(locale, 'eventCount', { count: events.length, runId: run.run_id })
+    : text(locale, 'noRunSelected');
 
   if (!list || !empty) return;
   if (events.length === 0) {
@@ -15,26 +19,34 @@ export function renderAgentTrace(run: RunView | null): void {
     empty.hidden = false;
     const title = empty.querySelector<HTMLElement>('h3');
     const description = empty.querySelector<HTMLElement>('p');
-    if (title) title.textContent = run ? 'No event trace' : 'No run selected';
+    if (title) title.textContent = run ? text(locale, 'noEventTrace') : text(locale, 'noRunSelected');
     if (description) description.textContent = run
-      ? 'The selected run did not include agent events.'
-      : 'Load a saved forecast or generate a new run to inspect its decisions.';
+      ? text(locale, 'noEventTraceDescription')
+      : text(locale, 'noRunForTrace');
     return;
   }
 
   empty.hidden = true;
   list.hidden = false;
-  list.innerHTML = events.map((event, index) => {
-    const sequence = escapeHtml(displayValue(event.sequence));
-    const state = escapeHtml(humanizeCode(event.state));
-    const action = escapeHtml(humanizeCode(event.action));
-    const outcome = escapeHtml(humanizeCode(event.outcome));
-    const reason = escapeHtml(displayValue(event.reason));
-    const timestamp = escapeHtml(formatUtc(event.timestamp));
+  list.innerHTML = events.map((event) => {
+    const sequence = escapeHtml(displayValue(event.sequence, locale));
+    const state = escapeHtml(eventActionLabel(event.state, locale));
+    const action = escapeHtml(eventActionLabel(event.action, locale));
+    const outcomeLabel = eventOutcomeLabel(event.outcome, locale);
+    const outcome = escapeHtml(outcomeLabel);
+    const reason = escapeHtml(displayValue(event.reason, locale));
+    const timestamp = escapeHtml(formatAlmaty(event.timestamp, locale));
     const duration = typeof event.duration_ms === 'number' && Number.isFinite(event.duration_ms)
-      ? `${event.duration_ms} ms`
-      : 'Duration unavailable';
-    const eventRunId = escapeHtml(displayValue(asRecord(event).run_id));
-    return `<li class="event-item"><span class="event-sequence">${sequence}</span><div class="event-content"><div class="event-heading"><strong>${state}</strong><span class="event-outcome" data-outcome="${outcome.toLowerCase()}">${outcome}</span><time datetime="${timestamp}">${timestamp}</time></div><p>${reason}</p><div class="event-meta"><span>Action: ${action}</span><span>${escapeHtml(duration)}</span><span class="event-run-id">${eventRunId}</span></div></div></li>`;
+      ? `${new Intl.NumberFormat(locale === 'kk' ? 'kk-KZ' : 'ru-RU').format(event.duration_ms)} ${text(locale, 'unitMilliseconds')}`
+      : text(locale, 'durationUnavailable');
+    const eventRunId = escapeHtml(displayValue(asRecord(event).run_id, locale));
+    const rawTimestamp = typeof event.timestamp === 'string' ? escapeHtml(event.timestamp) : '';
+    const outcomeCode = typeof event.outcome === 'string' ? event.outcome.toLowerCase() : 'unknown';
+    const outcomeState = outcomeCode === 'success' || outcomeCode === 'succeeded' || outcomeCode === 'completed'
+      ? 'success'
+      : outcomeCode === 'failed' || outcomeCode === 'error' ? 'failed'
+        : outcomeCode === 'skipped' ? 'warning'
+          : outcomeCode === 'started' || outcomeCode === 'running' ? 'info' : 'unknown';
+    return `<li class="event-item"><span class="event-sequence">${sequence}</span><div class="event-content"><div class="event-heading"><strong>${state}</strong><span class="event-outcome" data-outcome="${outcomeState}">${outcome}</span><time datetime="${rawTimestamp}">${timestamp}</time></div><div class="event-meta"><span>${escapeHtml(text(locale, 'action'))}: ${action}</span><span>${escapeHtml(duration)}</span></div><details class="event-details"><summary>${escapeHtml(text(locale, 'technicalDetails'))}</summary><p>${reason}</p><code>${eventRunId}</code></details></div></li>`;
   }).join('');
 }

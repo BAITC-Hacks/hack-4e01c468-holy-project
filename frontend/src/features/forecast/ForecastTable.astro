@@ -3,9 +3,11 @@ import { Card, Icon, Table } from '@santi020k/lumen-astro';
 import SectionHeader from '../../components/SectionHeader.astro';
 import { text } from '../../lib/preferences.mjs';
 
-const t = (key: string) => text('ru', key);
+const t = (key: Parameters<typeof text>[1]) => text('ru', key);
 ---
 
+<details class="forecast-records-disclosure">
+  <summary data-i18n="viewForecastRows">{t('viewForecastRows')}</summary>
 <section id="forecast" class="section-block supporting-section" aria-labelledby="forecast-rows-title">
   <SectionHeader
     kicker={t('forecastData')}
@@ -24,7 +26,8 @@ const t = (key: string) => text('ru', key);
       </a>
     </div>
     <div class="table-scroll" tabindex="0" aria-label={t('scrollForecastTable')} data-i18n-aria="scrollForecastTable">
-      <Table class="forecast-table">
+      <Table>
+        <table class="forecast-table">
         <caption data-i18n="forecastTableCaption">{t('forecastTableCaption')}</caption>
         <thead>
           <tr><th scope="col" data-i18n="validTime">{t('validTime')}</th><th scope="col" data-i18n="turbine">{t('turbine')}</th><th scope="col" data-i18n="lead">{t('lead')}</th><th scope="col">P10</th><th scope="col">P50</th><th scope="col">P90</th></tr>
@@ -32,7 +35,9 @@ const t = (key: string) => text('ru', key);
         <tbody data-forecast-rows>
           <tr><td colspan="6"><span class="table-loading" data-i18n="loadingForecastRows">{t('loadingForecastRows')}</span></td></tr>
         </tbody>
+        </table>
       </Table>
     </div>
   </Card>
 </section>
+</details>

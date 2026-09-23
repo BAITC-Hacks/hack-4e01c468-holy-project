@@ -103,6 +103,7 @@ class _ApplicationPredictor:
                 "mode": self.request.mode,
                 "source_fingerprint": app._source_identity(),
                 "weather_source": app._snapshot_identity,
+                "auto_train_model": app.settings.auto_train_model,
                 "model_parameters": app._model_parameters(),
                 "feature_schema": list(FEATURE_COLUMNS),
                 "dependencies": app._dependency_identity(),
@@ -164,6 +165,7 @@ class Application:
         self.settings = settings
         self.offline = bool(offline)
         self.weather_fixture = Path(weather_fixture).expanduser().resolve() if weather_fixture else None
+        self._weather_provider_injected = weather_provider is not None
         runtime = build_runtime(
             settings,
             offline=self.offline,
@@ -291,6 +293,14 @@ class Application:
         return self._source_files().identity
 
     def _weather_identity(self) -> str:
+        declared_identity = getattr(self.weather_provider, "source_identity", None)
+        if (
+            self._weather_provider_injected
+            and isinstance(declared_identity, str)
+            and declared_identity.strip()
+        ):
+            digest = hashlib.sha256(declared_identity.strip().encode("utf-8")).hexdigest()[:16]
+            return f"injected-{digest}"
         if self.offline:
             return "synthetic"
         if self.weather_fixture is not None:
@@ -298,6 +308,16 @@ class Application:
                 return f"fixture-{_sha256(self.weather_fixture)}"
             except OSError:
                 return "fixture-missing"
+        if isinstance(declared_identity, str) and declared_identity.strip():
+            identity = declared_identity.strip()
+            digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
+            if len(identity) <= 80 and all(
+                character.isascii()
+                and (character.isalnum() or character in "._-")
+                for character in identity
+            ):
+                return identity
+            return f"weather-{digest}"
         return "openmeteo-ifs"
 
     def _snapshot_cache_path(self, request: RunRequest) -> Path:
@@ -634,6 +654,9 @@ class Application:
     def _baseline_selection_path(self, mode: str) -> Path:
         return self.settings.model_dir / f"baseline-{mode}-{self._snapshot_identity}.json"
 
+    def _backtest_fold_cache_dir(self) -> Path:
+        return self.settings.model_dir / f"backtest-folds-{self._snapshot_identity}"
+
     def _selected_baseline(
         self, mode: str, origin: datetime | pd.Timestamp | None = None
     ) -> str:
@@ -824,8 +847,12 @@ class Application:
     ) -> ForecastModel | None:
         model = self._load_active_model(mode, origin)
         if model is not None:
+            self.last_training_error = None
             return model
         self.last_training_error = None
+        if not self.settings.auto_train_model:
+            self.last_training_error = "automatic_training_disabled_model_unavailable"
+            return None
         try:
             self.train(mode=mode)
             return self._load_active_model(mode, origin)
@@ -1072,7 +1099,7 @@ class Application:
             history,
             snapshots,
             origins,
-            self.settings.model_dir / "backtest-folds",
+            self._backtest_fold_cache_dir(),
             model_parameters=self._model_parameters(iterations),
             calibration_days=calibration_days,
         )
