@@ -143,9 +143,9 @@ def test_demo_run_shows_both_turbines_and_degraded_state() -> None:
     assert service.calls[0][0].mode == "demo"
     rendered = " ".join(item.value for item in app.markdown)
     assert "degraded" in rendered.lower()
-    assert "обе турбины" in rendered.lower()
+    assert "обеих турбин" in rendered.lower()
     assert "run-degraded" in rendered
-    assert any("demo mode" in item.value.lower() for item in app.caption)
+    assert any("демо-режим" in item.value.lower() for item in app.caption)
     assert app.session_state["wf_run_id"] == "run-degraded"
     assert len(app.get("plotly_chart")) == 2
 
@@ -214,7 +214,7 @@ def test_page_title_is_semantic_and_precedes_forecast_controls() -> None:
     rendered = "\n".join(item.value for item in app.markdown)
 
     title_position = rendered.index('<h1 class="wf-title">Обзор прогноза</h1>')
-    controls_position = rendered.index("Новый расчёт")
+    controls_position = rendered.index("НОВЫЙ РАСЧЁТ")
 
     assert title_position < controls_position
 
@@ -245,8 +245,15 @@ def test_overview_shows_four_operational_metrics_including_hourly_step() -> None
     app = AppTest.from_function(render_fake, args=(service,)).run()
 
     rendered = "\n".join(item.value for item in app.markdown)
-    assert rendered.count('class="wf-metric-card"') == 4
-    assert "Шаг прогноза" in rendered
+    assert all(
+        label in rendered
+        for label in (
+            "Горизонт прогноза",
+            "Шаг прогноза",
+            "Бэктест",
+            "Последнее наблюдение",
+        )
+    )
     assert "1 час" in rendered
 
 

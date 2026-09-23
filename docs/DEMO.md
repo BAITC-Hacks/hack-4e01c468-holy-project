@@ -12,7 +12,7 @@ python -m wind_forecast.cli train
 python -m wind_forecast.cli backtest
 ```
 
-For an offline 48-hour preview, use the supplied `tests/fixtures/weather/synthetic_48h.json` fixture with demo mode. It was generated for origin `2026-02-01T00:00:00+05:00` and horizon 48. The CLI accepts an explicit demo weather fixture:
+For a fixed-origin CLI preview, use the supplied `tests/fixtures/weather/synthetic_48h.json` fixture with demo mode. It was generated for origin `2026-02-01T00:00:00+05:00` and horizon 48:
 
 ```bash
 python -m wind_forecast.cli --mode demo \
@@ -20,13 +20,13 @@ python -m wind_forecast.cli --mode demo \
   run --origin 2026-02-01T00:00:00+05:00 --horizon 48
 ```
 
-The app itself can be opened with:
+To launch the interactive dashboard with deterministic synthetic weather, opt in explicitly:
 
 ```bash
-streamlit run app.py
+RUN_MODE=demo DEMO_OFFLINE=1 streamlit run app.py
 ```
 
-If the service is configured for competition mode, it must refuse to treat the synthetic fixture as point-in-time weather. For an offline product demo, start the shared application in demo mode using the supported `RUN_MODE` setting. The dashboard defaults to the fixture's origin and a 48-hour horizon.
+`DEMO_OFFLINE=1` is accepted only when `RUN_MODE=demo`. Setting `RUN_MODE=demo` alone selects demo policy but does not switch the dashboard to synthetic weather; with `DEMO_OFFLINE` unset (or `0`), it uses the configured archive provider. Competition mode refuses the offline setting. The dashboard's default origin is `2026-02-01T00:00:00+05:00` with a 48-hour horizon. The checked-in fixed-origin fixture is for CLI use; it is not silently selected by the dashboard.
 
 ## Tell the evidence story
 

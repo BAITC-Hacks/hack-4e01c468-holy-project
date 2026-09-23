@@ -10,7 +10,6 @@ import pandas as pd
 from wind_forecast.contracts import parse_request
 from wind_forecast.ui.charts import build_forecast_chart, build_site_map
 from wind_forecast.ui.components import (
-    detail_card,
     escaped,
     load_stylesheet,
     metric_card,
@@ -45,13 +44,13 @@ _SECTION_COPY = {
 def _iso_label(value: Any) -> str:
     """Format timestamps with an explicit timezone suffix."""
     if value is None:
-        return "Unavailable"
+        return "Недоступно"
     try:
         parsed = pd.Timestamp(value)
     except (TypeError, ValueError):
-        return "Unavailable"
+        return "Недоступно"
     if parsed.tzinfo is None:
-        return "Timezone missing"
+        return "Часовой пояс не указан"
     return parsed.tz_convert("UTC").strftime("%d %b %Y · %H:%M UTC")
 
 
@@ -94,7 +93,7 @@ def _render_page_heading(st, section: str) -> None:
 
 def _render_topbar(st, section: str) -> None:
     st.markdown(
-        '<div class="wf-topbar"><div class="wf-breadcrumbs">Объекты <span>/</span> '
+        '<div id="overview" class="wf-topbar"><div class="wf-breadcrumbs">Объекты <span>/</span> '
         f'ВЭС Алматы <span>/</span> <strong>{_SECTION_TITLES[section]}</strong></div>'
         '<div class="wf-topbar-right"><span class="wf-demo-pill">ALMATY · UTC+5</span>'
         '<span class="wf-avatar" aria-label="Рабочее пространство Windline">W</span></div></div>',
@@ -155,12 +154,14 @@ def _render_controls(st, app) -> None:
         st.session_state["wf_selection_initialized"] = True
         st.session_state["wf_reused"] = result.reused
         st.session_state["wf_last_action"] = "refresh" if refresh_clicked else "run"
+        st.session_state["wf_last_attempt_failed"] = False
     except Exception as exc:  # UI boundary: do not expose arbitrary service details.
         st.session_state["wf_run_result"] = None
         st.session_state["wf_run_id"] = None
         st.session_state["wf_selection_initialized"] = True
         st.session_state["wf_reused"] = False
         st.session_state["wf_last_action"] = None
+        st.session_state["wf_last_attempt_failed"] = True
         reason_code = getattr(exc, "reason_code", "run_failed")
         st.error(
             f"Не удалось завершить расчёт ({reason_code}). "
@@ -173,16 +174,19 @@ def _render_controls(st, app) -> None:
 def _render_status(st, result, manifest: Mapping[str, Any]) -> None:
     status = getattr(result, "status", None) or manifest.get("status", "unknown")
     st.markdown(status_badge(str(status)), unsafe_allow_html=True)
+    warnings = []
     if status == "degraded":
-        st.warning(
-            "Расчёт завершён с ограничениями. Проверьте модель и источник погоды перед использованием."
-        )
+        warnings.append("Расчёт завершён с ограничениями")
     elif status == "failed":
         st.error("Расчёт завершился с ошибкой. Результаты этого запуска нельзя использовать.")
     if manifest.get("mode") == "demo":
-        st.caption("ДЕМО-РЕЖИМ · Этот запуск не подтверждает качество для соревнования.")
+        warnings.append("Демо-данные не подтверждают качество для соревнования")
     elif manifest.get("competition_valid") is False:
-        st.caption("Есть непроверенные данные; этот запуск не подтверждает качество для соревнования.")
+        warnings.append("Происхождение данных не подтверждено для соревнования")
+    if warnings:
+        st.warning(" · ".join(warnings) + ". Проверьте модель и источник погоды перед использованием.")
+    if manifest.get("mode") == "demo":
+        st.caption("ДЕМО-РЕЖИМ · Не использовать как подтверждённый результат.")
 
     if (
         st.session_state.get("wf_last_action") == "refresh"
@@ -199,7 +203,7 @@ def _render_status(st, result, manifest: Mapping[str, Any]) -> None:
     st.session_state["wf_last_action"] = None
 
 
-def _render_summary_metrics(st, result, run_data: Mapping[str, Any] | None) -> None:
+def _render_summary_metrics(st, run_data: Mapping[str, Any] | None) -> None:
     """Render operational facts only; unavailable metrics remain explicitly unavailable."""
     run_data = run_data or {}
     manifest = run_data.get("manifest") or {}
@@ -227,24 +231,29 @@ def _render_summary_metrics(st, result, run_data: Mapping[str, Any] | None) -> N
             "Возраст на момент прогноза",
         ),
     ]
-    columns = st.columns(4, gap="small")
-    for column, card in zip(columns, cards, strict=True):
-        column.markdown(card, unsafe_allow_html=True)
+    with st.container(key="wf-overview-metrics"):
+        columns = st.columns(4, gap="small")
+        for column, card in zip(columns, cards, strict=True):
+            column.markdown(card, unsafe_allow_html=True)
 
 
 def _render_forecast_panel(st, result, run_data: Mapping[str, Any] | None) -> None:
+    with st.container(border=True, key="wf-forecast-panel"):
+        _render_forecast_panel_content(st, result, run_data)
+
+
+def _render_forecast_panel_content(st, result, run_data: Mapping[str, Any] | None) -> None:
     run_data = run_data or {}
     forecast = run_data.get("forecast")
     manifest = run_data.get("manifest") or {}
     status = getattr(result, "status", manifest.get("status", "unknown"))
     st.markdown(
         '<div class="wf-eyebrow">ПРОГНОЗ ВЫРАБОТКИ</div>'
-        '<div class="wf-panel-title">Почасовая мощность</div>'
+        '<div class="wf-panel-title">Почасовая мощность обеих турбин</div>'
         '<div class="wf-panel-copy">p50 — медианный прогноз, заливка показывает диапазон p10–p90.</div>',
         unsafe_allow_html=True,
     )
     if status == "failed":
-        st.info("График недоступен: этот запуск завершился с ошибкой.")
         return
     if not isinstance(forecast, pd.DataFrame) or forecast.empty:
         st.info("В этом запуске пока нет строк прогноза.")
@@ -263,10 +272,16 @@ def _render_forecast_panel(st, result, run_data: Mapping[str, Any] | None) -> No
     )
 
 
-def _render_site_panel(st, run_data: Mapping[str, Any] | None) -> None:
+def _render_site_panel(st, result, run_data: Mapping[str, Any] | None) -> None:
+    with st.container(border=True, key="wf-site-panel"):
+        _render_site_panel_content(st, result, run_data)
+
+
+def _render_site_panel_content(st, result, run_data: Mapping[str, Any] | None) -> None:
     run_data = run_data or {}
     manifest = run_data.get("manifest") or {}
     weather = manifest.get("weather_provenance") or {}
+    status = getattr(result, "status", manifest.get("status", "unknown"))
     weather_status = weather.get("provenance_status", "неизвестно")
     st.markdown(
         '<div class="wf-eyebrow">ПРОИСХОЖДЕНИЕ ДАННЫХ</div>'
@@ -281,12 +296,13 @@ def _render_site_panel(st, run_data: Mapping[str, Any] | None) -> None:
         f'<strong>{escaped(weather_status)}</strong></div>',
         unsafe_allow_html=True,
     )
-    st.plotly_chart(
-        build_site_map(),
-        width="stretch",
-        config={"displayModeBar": False, "responsive": True},
-        key="wf_site_map",
-    )
+    if manifest and status != "failed":
+        st.plotly_chart(
+            build_site_map(),
+            width="stretch",
+            config={"displayModeBar": False, "responsive": True},
+            key="wf_site_map",
+        )
     st.markdown(
         '<div class="wf-location-list">'
         '<div><i class="wf-site-dot wf-site-dot-one"></i><span><strong>Турбина 01</strong>'
@@ -411,39 +427,58 @@ def render_dashboard(app) -> None:
     )
     st.markdown(
         f"<style>{load_stylesheet()}"
-        '@media (max-width: 640px) { '
-        '[data-testid="stMainBlockContainer"] { padding-top: 2.6rem; }'
-        " }</style>",
+        '@media (max-width: 640px) { [data-testid="stMainBlockContainer"] { padding-top: 2.8rem; } }'
+        "</style>",
         unsafe_allow_html=True,
     )
 
     with st.sidebar:
         st.markdown(
-            '<div class="wf-brand"><div class="wf-brand-mark">WINDLINE<span style="color:#67d1c0">.</span></div>'
-            '<div class="wf-brand-sub">Forecast desk · Almaty</div></div>',
+            '<a class="wf-brand" href="#overview" aria-label="Windline, обзор">'
+            '<span class="wf-brand-symbol" aria-hidden="true">✳</span><span>'
+            '<span class="wf-brand-mark">WINDLINE<span class="wf-brand-period">.</span></span>'
+            '<span class="wf-brand-sub">FORECAST DESK · ALMATY</span></span></a>',
             unsafe_allow_html=True,
         )
+        st.caption("РАБОЧЕЕ ПРОСТРАНСТВО")
         st.radio(
-            "Dashboard section", _SECTIONS,
+            "Раздел панели", _SECTIONS,
+            format_func=lambda section: _SECTION_LABELS[section],
             label_visibility="collapsed", key="wf_section",
         )
-        st.markdown('<div class="wf-divider"></div>', unsafe_allow_html=True)
-        st.caption("TURBINE LOCATIONS")
         st.markdown(
-            '<div class="wf-location-row"><span>Turbine 01</span><span>43.645150° N<br>78.535604° E</span></div>'
-            '<div class="wf-location-row"><span>Turbine 02</span><span>43.643198° N<br>78.538828° E</span></div>',
+            '<div class="wf-side-bottom"><span class="wf-side-site-dot"></span><div>'
+            '<strong>ВЭС Алматы</strong><small>2 турбины · Казахстан</small></div></div>',
             unsafe_allow_html=True,
         )
 
     section = st.session_state.get("wf_section", "Overview")
+    _render_topbar(st, section)
     _render_page_heading(st, section)
-    _render_controls(st, app)
+
+    status_slot = metrics_slot = left_slot = source_slot = None
+    if section == "Overview":
+        status_slot = st.empty()
+        metrics_slot = st.empty()
+        with st.container(key="wf-overview-workspace"):
+            left, right = st.columns([2.1, 1], gap="large")
+            with left:
+                left_slot = st.empty()
+            with right:
+                controls_slot = st.empty()
+                source_slot = st.empty()
+        with controls_slot.container():
+            _render_controls(st, app)
+    else:
+        _render_controls(st, app)
+
+    load_error = None
     if not st.session_state.get("wf_selection_initialized", False):
         try:
             result = app.latest()
         except Exception:
             result = None
-            st.error("The latest forecast could not be loaded. Check the run directory and retry.")
+            load_error = "Не удалось загрузить последний прогноз. Проверьте каталог запусков."
         st.session_state["wf_run_result"] = result
         st.session_state["wf_run_id"] = result.run_id if result is not None else None
         st.session_state["wf_selection_initialized"] = True
@@ -456,30 +491,67 @@ def render_dashboard(app) -> None:
             run_data = app.read_run(result.run_id)
             manifest = run_data.get("manifest") or {}
         except Exception:
-            st.error("The latest forecast artifacts could not be read. Open Agent Trace and retry.")
+            load_error = "Не удалось прочитать файлы выбранного запуска."
 
+    if section == "Overview":
+        with status_slot.container():
+            if load_error:
+                st.error(load_error)
+            if result is not None:
+                origin_label = _iso_label(manifest.get("forecast_origin"))
+                st.markdown(
+                    f'<div class="wf-run-meta">Начало прогноза · {escaped(origin_label)} '
+                    f'&nbsp; · &nbsp; Запуск · {escaped(result.run_id)}</div>',
+                    unsafe_allow_html=True,
+                )
+                _render_status(st, result, manifest)
+            elif not load_error and not st.session_state.get("wf_last_attempt_failed"):
+                st.warning("Проверьте происхождение погодных данных перед использованием результатов.")
+
+        with metrics_slot.container():
+            _render_summary_metrics(st, run_data)
+
+        with left_slot.container():
+            if result is None:
+                st.markdown(
+                    '<div class="wf-empty-state"><span class="wf-empty-symbol">⌁</span><div>'
+                    '<strong>Прогнозная панель готова</strong><p>Выберите начало и горизонт, '
+                    'чтобы рассчитать почасовую мощность двух турбин.</p></div></div>',
+                    unsafe_allow_html=True,
+                )
+                if not st.session_state.get("wf_last_attempt_failed"):
+                    st.info("Выберите начало прогноза и горизонт, затем запустите расчёт.")
+            elif run_data is None:
+                st.info("Данные прогноза для выбранного запуска недоступны.")
+            else:
+                _render_forecast_panel(st, result, run_data)
+
+        with source_slot.container():
+            _render_site_panel(st, result, run_data)
+        return
+
+    if load_error:
+        st.error(load_error)
     if result is None:
         st.markdown(
-            '<div class="wf-panel"><div class="wf-panel-title">Your forecast desk is ready</div>'
-            '<div class="wf-panel-copy">Choose a forecast origin and horizon, then run the workflow. '
-            'The first result will include both turbines, weather provenance, and the agent audit trail.</div></div>',
+            '<div class="wf-panel"><div class="wf-panel-title">Прогнозная панель готова</div>'
+            '<div class="wf-panel-copy">Выберите начало и горизонт прогноза. В результате будут '
+            'почасовые значения обеих турбин, происхождение погоды и журнал агента.</div></div>',
             unsafe_allow_html=True,
         )
-        st.info("Choose a forecast origin and horizon, then run a forecast to see both turbines here.")
+        st.info("Выберите начало прогноза и горизонт, затем запустите расчёт.")
         return
     if run_data is None:
         return
 
     origin_label = _iso_label(manifest.get("forecast_origin"))
     st.markdown(
-        f'<div class="wf-run-meta">Forecast origin · {escaped(origin_label)} '
-        f'&nbsp; · &nbsp; Run ID · {escaped(result.run_id)}</div>',
+        f'<div class="wf-run-meta">Начало прогноза · {escaped(origin_label)} '
+        f'&nbsp; · &nbsp; Запуск · {escaped(result.run_id)}</div>',
         unsafe_allow_html=True,
     )
     _render_status(st, result, manifest)
-    if section == "Overview":
-        _render_summary(st, result, run_data)
-    elif section == "Forecast":
+    if section == "Forecast":
         _render_forecast(st, result, run_data)
     elif section == "Backtest":
         _render_backtest(st, run_data.get("metrics") or {})

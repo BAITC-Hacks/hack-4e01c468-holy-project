@@ -11,6 +11,7 @@ import numbers
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from types import CodeType
 from typing import Any, Callable, Protocol
 
 import numpy as np
@@ -136,6 +137,38 @@ def _canonical_hash(value: Any) -> str:
         _jsonable(value), ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _code_identity(code: CodeType) -> tuple[Any, ...]:
+    """Return stable code metadata without runtime-adapted bytecode state."""
+    def stable_constant(value: Any) -> Any:
+        if isinstance(value, CodeType):
+            return _code_identity(value)
+        if isinstance(value, tuple):
+            return tuple(stable_constant(item) for item in value)
+        if isinstance(value, frozenset):
+            return tuple(sorted((stable_constant(item) for item in value), key=repr))
+        return value
+
+    return (
+        code.co_argcount,
+        code.co_posonlyargcount,
+        code.co_kwonlyargcount,
+        code.co_nlocals,
+        code.co_stacksize,
+        code.co_flags,
+        code.co_code,
+        tuple(stable_constant(value) for value in code.co_consts),
+        code.co_names,
+        code.co_varnames,
+        code.co_freevars,
+        code.co_cellvars,
+        code.co_exceptiontable,
+    )
+
+
+def _code_fingerprint(code: CodeType) -> str:
+    return hashlib.sha256(marshal.dumps(_code_identity(code))).hexdigest()
 
 
 def _frame_fingerprint(frame: pd.DataFrame) -> str:
@@ -377,11 +410,16 @@ class ForecastAgent:
 
             prediction_error: Exception | None = None
             try:
-                prediction = self._generate_forecast(
-                    events, history, snapshot, request, self.predictor
+                prediction, prediction_predictor_fingerprints = self._generate_forecast(
+                    events,
+                    history,
+                    snapshot,
+                    request,
+                    self.predictor,
+                    active_predictor_fingerprints,
                 )
                 prediction = self._with_predictor_fingerprints(
-                    prediction, active_predictor_fingerprints
+                    prediction, prediction_predictor_fingerprints
                 )
             except Exception as exc:
                 prediction_error = exc
@@ -509,17 +547,19 @@ class ForecastAgent:
         snapshot: WeatherSnapshot,
         request: RunRequest,
         predictor: Any,
-    ) -> Prediction:
-        """Call staged predictors explicitly, retaining callable compatibility."""
+        initial_predictor_fingerprints: dict[str, str],
+    ) -> tuple[Prediction, dict[str, str]]:
+        """Call staged predictors and return the identity for the model actually used."""
         stages = ("prepare", "train_or_load", "predict")
         if not all(callable(getattr(predictor, name, None)) for name in stages):
-            return self._step(
+            prediction = self._step(
                 events,
                 "generate_forecast",
                 "continue",
                 "opaque predictor call; feature preparation and model loading are not observable",
                 lambda: predictor(history, snapshot, request),
             )
+            return prediction, initial_predictor_fingerprints
 
         features = self._step(
             events,
@@ -535,13 +575,15 @@ class ForecastAgent:
             "train or load the configured model bundle",
             lambda: predictor.train_or_load(history, features, snapshot, request),
         )
-        return self._step(
+        model_fingerprints = self._predictor_fingerprints(predictor)
+        prediction = self._step(
             events,
             "generate_forecast",
             "continue",
             "predict with the prepared features and model bundle",
             lambda: predictor.predict(model_bundle, features, request),
         )
+        return prediction, model_fingerprints
 
     @staticmethod
     def _predictor_fingerprints(predictor: Any) -> dict[str, str]:
@@ -571,14 +613,14 @@ class ForecastAgent:
             function = getattr(method, "__func__", method)
             code = getattr(function, "__code__", None)
             if code is not None:
-                stages[name] = hashlib.sha256(marshal.dumps(code)).hexdigest()
+                stages[name] = _code_fingerprint(code)
         if not stages:
             function = predictor
             if getattr(function, "__code__", None) is None:
                 function = getattr(predictor, "__call__", predictor)
             code = getattr(function, "__code__", None)
             if code is not None:
-                stages["call"] = hashlib.sha256(marshal.dumps(code)).hexdigest()
+                stages["call"] = _code_fingerprint(code)
         try:
             config_hash = _canonical_hash(config)
             model_hash = _canonical_hash(

@@ -109,9 +109,18 @@ overrides work before or after a subcommand. `--mode` defaults to `RUN_MODE` fro
   --weather-fixture tests/fixtures/weather/synthetic_48h.json \
   --origin 2026-01-31T19:00:00Z --horizon 48
 
-# The dashboard uses the same Application service as the CLI.
+# The dashboard uses the same Application service as the CLI. This selects
+# deterministic synthetic weather explicitly for a demo-only browser session.
+RUN_MODE=demo DEMO_OFFLINE=1 .venv/bin/streamlit run app.py
+
+# With DEMO_OFFLINE unset or 0, the dashboard uses the configured archive provider.
 .venv/bin/streamlit run app.py
 ```
+
+`RUN_MODE=demo` selects demo policy but does not select synthetic weather. The dashboard uses
+synthetic weather only when `DEMO_OFFLINE=1` is set, and refuses that setting unless
+`RUN_MODE=demo`. Leave `DEMO_OFFLINE` unset (or set it to `0`) to use the configured weather
+provider. CLI offline runs continue to require the explicit `--offline --mode demo` options.
 
 Add `--data-dir`, `--cache-dir`, `--model-dir`, or `--run-dir` after any subcommand to keep
 prepared data and artifacts outside the repository defaults. `train` accepts `--train-start`,

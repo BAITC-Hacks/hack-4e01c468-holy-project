@@ -42,6 +42,37 @@ def _application(root: Path) -> Application:
     )
 
 
+def _long_history_application(root: Path) -> Application:
+    data_dir = root / "data"
+    data_dir.mkdir(parents=True)
+    local_times = pd.date_range(
+        "2026-01-01 00:00", "2026-02-01 00:00", freq="10min", inclusive="left"
+    )
+    for index, turbine in enumerate(("turbine_1", "turbine_2"), start=1):
+        pd.DataFrame(
+            {
+                "Статистическое время": local_times.strftime("%Y-%m-%d %H:%M:%S"),
+                "Средняя скорость ветра(m/s)": [5.0 + index] * len(local_times),
+                "Нормализованная активная мощность": [0.35 + index * 0.05] * len(local_times),
+                "Средняя температура окружающей среды(°C)": [-3.0] * len(local_times),
+            }
+        ).to_csv(data_dir / f"{turbine}.csv", index=False)
+    return Application(
+        Settings(
+            root_dir=root,
+            data_dir=data_dir,
+            cache_dir=root / "cache",
+            model_dir=root / "models",
+            run_dir=root / "runs",
+            fixture_dir=root / "fixtures",
+            openai_api_key="",
+            mode="demo",
+        ),
+        offline=True,
+        model_parameters={"iterations": 2},
+    )
+
+
 @pytest.mark.parametrize("horizon", [24, 48])
 def test_run_artifacts_follow_forecast_and_manifest_schemas(tmp_path: Path, horizon: int) -> None:
     app = _application(tmp_path)
@@ -158,3 +189,134 @@ def test_backtest_hides_accuracy_metrics_when_weather_is_synthetic(
     assert metrics["metric_status"] == "unavailable_unverified_weather"
     assert metrics["models"] == []
     assert metrics["coverage"]["competition_valid"] is False
+
+
+def test_run_rejects_backtest_metrics_for_different_source_content(tmp_path: Path) -> None:
+    app = _application(tmp_path)
+    metrics_path = app.settings.model_dir / "backtest" / "metrics.json"
+    metrics_path.parent.mkdir(parents=True)
+    metrics_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "metric_status": "available",
+                "evaluation_period": {
+                    "start": "2026-01-01T00:00:00Z",
+                    "end": "2026-01-30T00:00:00Z",
+                },
+                "models": [{"model": "catboost_quantile", "n": 96, "mae": 0.1}],
+                "coverage": {
+                    "identity": {
+                        "data_source_fingerprint": "different-source",
+                        "mode": "demo",
+                        "weather_source": "synthetic",
+                        "weather_provenance_class": "synthetic",
+                    }
+                },
+            }
+        )
+    )
+
+    metrics = app._past_backtest_metrics(
+        pd.Timestamp("2026-02-01T00:00:00Z"),
+        mode="demo",
+        provenance={"provenance_status": "synthetic"},
+    )
+
+    assert metrics["metric_status"] == "unavailable_no_labels"
+    assert metrics["models"] == []
+
+
+def test_synthetic_demo_run_rejects_competition_backtest_metrics(tmp_path: Path) -> None:
+    app = _application(tmp_path)
+    metrics_path = app.settings.model_dir / "backtest" / "metrics.json"
+    metrics_path.parent.mkdir(parents=True)
+    metrics_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "metric_status": "available",
+                "evaluation_period": {
+                    "start": "2026-01-01T00:00:00Z",
+                    "end": "2026-01-30T00:00:00Z",
+                },
+                "models": [{"model": "catboost_quantile", "n": 96, "mae": 0.1}],
+                "coverage": {
+                    "identity": {
+                        "data_source_fingerprint": app._source_identity(),
+                        "mode": "competition",
+                        "weather_source": "openmeteo-ifs",
+                        "weather_provenance_class": "verified",
+                    },
+                    "evidence_scope": "historical_backtest",
+                    "evidence_class": "competition",
+                    "competition_valid": True,
+                },
+            }
+        )
+    )
+
+    metrics = app._past_backtest_metrics(
+        pd.Timestamp("2026-02-01T00:00:00Z"),
+        mode="demo",
+        provenance={"provenance_status": "synthetic"},
+    )
+
+    assert metrics["metric_status"] == "unavailable_no_labels"
+    assert metrics["models"] == []
+
+
+def test_train_backtest_run_keeps_historical_metrics_separate_and_traced(
+    tmp_path: Path,
+) -> None:
+    app = _long_history_application(tmp_path)
+    app.train(
+        mode="demo",
+        train_start=date(2026, 1, 2),
+        train_end=date(2026, 1, 15),
+        calibration_start=date(2026, 1, 16),
+        calibration_end=date(2026, 1, 30),
+        iterations=2,
+    )
+    metrics_path = app.backtest(
+        mode="demo",
+        start=date(2026, 1, 30),
+        end=date(2026, 1, 30),
+        history_start=date(2026, 1, 1),
+        iterations=2,
+        calibration_days=15,
+    )
+    backtest_metrics = json.loads(metrics_path.read_text())
+    request = parse_request("2026-02-01T00:00:00+05:00", 24, "demo")
+
+    result = app.run(request)
+    saved = app.read_run(result.run_id)
+    states = [event["state"] for event in saved["events"]]
+    positions = [
+        states.index(state)
+        for state in (
+            "fetch_weather",
+            "validate_inputs",
+            "prepare_features",
+            "train_or_load_model",
+            "generate_forecast",
+        )
+    ]
+
+    assert metrics_path == app.settings.model_dir / "backtest" / "metrics.json"
+    assert backtest_metrics["coverage"]["evidence_scope"] == "historical_backtest"
+    assert backtest_metrics["coverage"]["forecast_target_metric_status"] == "unavailable_no_labels"
+    assert positions == sorted(positions)
+    assert saved["metrics"]["evaluation_period"]["start"] == "2026-01-29T19:00:00+00:00"
+    assert saved["metrics"]["coverage"]["evidence_scope"] == "historical_backtest"
+    assert saved["metrics"]["coverage"]["identity"]["mode"] == "demo"
+    assert saved["metrics"]["coverage"]["identity"]["data_source_fingerprint"] == app._source_identity()
+    assert saved["metrics"]["coverage"]["forecast_target_metric_status"] == "unavailable_no_labels"
+
+    repeated = app.run(request)
+    assert repeated.reused is True
+
+    app.model_parameters["iterations"] = 3
+    changed_model = app.run(request)
+    assert changed_model.reused is False
+    assert changed_model.run_id != result.run_id

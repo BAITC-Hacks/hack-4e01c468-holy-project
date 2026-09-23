@@ -386,6 +386,56 @@ class ArtifactStore:
                 continue
         return None
 
+    def record_reuse_events(
+        self, events: list[dict[str, Any]], reused_run_id: str
+    ) -> str:
+        """Durably store the current invocation trace beside immutable reused runs."""
+        if not isinstance(reused_run_id, str) or not reused_run_id:
+            raise ValueError("artifact_reuse_run_id_invalid")
+
+        invocation_id = uuid.uuid4().hex
+        reuse_root = self.root / "reuse-events"
+        reuse_root.mkdir(parents=True, exist_ok=True)
+        normalized = self._reuse_events_with_identity(
+            events, invocation_id, reused_run_id
+        )
+        content = "".join(_canonical_json(event) + "\n" for event in normalized)
+        final_path = reuse_root / f"{invocation_id}.jsonl"
+        fd, temporary_name = tempfile.mkstemp(prefix=".staging-", dir=reuse_root)
+        temporary_path = Path(temporary_name)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as stream:
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary_path, final_path)
+            directory_fd = os.open(reuse_root, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        finally:
+            if temporary_path.exists():
+                temporary_path.unlink()
+        return invocation_id
+
+    @classmethod
+    def _reuse_events_with_identity(
+        cls,
+        events: list[dict[str, Any]],
+        invocation_id: str,
+        reused_run_id: str,
+    ) -> list[dict[str, Any]]:
+        normalized = cls._events_with_run_id(events, reused_run_id)
+        result = []
+        for event in normalized:
+            event.pop("run_id", None)
+            event["details"] = event.get("details", {})
+            event["invocation_id"] = invocation_id
+            event["reused_run_id"] = reused_run_id
+            result.append(event)
+        return result
+
     def _record_update_check(
         self,
         scope: dict[str, Any],

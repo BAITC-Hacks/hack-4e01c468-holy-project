@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.metadata
 import json
+import marshal
+import os
+import tempfile
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
@@ -15,7 +19,14 @@ import pandas as pd
 from wind_forecast.agent import ForecastAgent
 from wind_forecast.artifacts import ArtifactStore
 from wind_forecast.config import Settings
-from wind_forecast.contracts import Decision, RunRequest, RunResult, WeatherSnapshot, parse_request
+from wind_forecast.contracts import (
+    Decision,
+    Prediction,
+    RunRequest,
+    RunResult,
+    WeatherSnapshot,
+    parse_request,
+)
 from wind_forecast.data import DataPipeline, validate_hourly_history
 from wind_forecast.evaluation import rolling_backtest
 from wind_forecast.features import FEATURE_COLUMNS, FeaturePipeline, training_rows
@@ -24,6 +35,7 @@ from wind_forecast.models import (
     DEFAULT_MODEL_PARAMETERS,
     BaselineModel,
     ForecastModel,
+    fit_residual_calibration,
     _metadata_path,
 )
 from wind_forecast.weather import (
@@ -123,6 +135,13 @@ class _DeterministicAnalyzer:
     """Select only safe agent actions and never makes an external request."""
 
     def __call__(self, diagnostics: dict[str, Any], allowed: set[str]) -> Decision:
+        if (
+            "use_cached_weather" in allowed
+            and diagnostics.get("cached_weather_available") is True
+        ):
+            return Decision(
+                "use_cached_weather", "deterministic_fallback:validated_cached_weather"
+            )
         if "use_baseline" in allowed and diagnostics.get("baseline_available") is True:
             return Decision("use_baseline", "deterministic_fallback:model_unavailable")
         if "finalize" in allowed:
@@ -138,6 +157,68 @@ class _PreparedSource:
     fingerprints: dict[str, str]
     identity: str
     is_hourly: bool = False
+
+
+class _ApplicationPredictor:
+    """Expose feature preparation, model loading, and prediction as agent stages."""
+
+    def __init__(self, application: "Application", request: RunRequest) -> None:
+        self.application = application
+        self.request = request
+        self.history: pd.DataFrame | None = None
+        self.snapshot_provenance: dict[str, Any] = {}
+
+    def reuse_identity(self) -> dict[str, Any]:
+        """Declare identities without loading model objects before the weather gate."""
+        app = self.application
+        return {
+            "config": {
+                "mode": self.request.mode,
+                "source_fingerprint": app._source_identity(),
+                "weather_source": app._snapshot_identity,
+                "model_parameters": app._model_parameters(),
+                "feature_schema": list(FEATURE_COLUMNS),
+                "dependencies": app._dependency_identity(),
+                "application_code": app._predictor_code_identity(),
+            },
+            "model": app._active_model_identity(
+                self.request.mode, self.request.origin
+            ),
+        }
+
+    def prepare(
+        self, history: pd.DataFrame, snapshot: WeatherSnapshot, request: RunRequest
+    ) -> pd.DataFrame:
+        self.history = history.copy()
+        self.snapshot_provenance = dict(snapshot.provenance)
+        return self.application.feature_pipeline.build(history, snapshot, request)
+
+    def train_or_load(
+        self,
+        history: pd.DataFrame,
+        features: pd.DataFrame,
+        snapshot: WeatherSnapshot,
+        request: RunRequest,
+    ) -> ForecastModel:
+        del features, snapshot
+        model = self.application._ensure_model(request.mode, request.origin)
+        if model is None:
+            raise RuntimeError("forecast_model_unavailable")
+        self.history = history.copy()
+        return model
+
+    def predict(
+        self, model_bundle: ForecastModel, features: pd.DataFrame, request: RunRequest
+    ) -> Prediction:
+        history = self.history if self.history is not None else pd.DataFrame()
+        prediction = model_bundle.predict(features)
+        prediction.diagnostics.update(
+            self.application._model_diagnostics(model_bundle, history, request)
+        )
+        prediction.diagnostics["metrics"] = self.application._past_backtest_metrics(
+            request.origin, request.mode, self.snapshot_provenance
+        )
+        return prediction
 
 
 class Application:
@@ -215,24 +296,12 @@ class Application:
                 (destination / "quality.json").write_bytes(quality_path.read_bytes())
         else:
             self.data_pipeline.prepare(source.paths, destination)
-        manifest_path.write_text(
-            json.dumps(
-                {"schema_version": 1, "source_fingerprints": source.fingerprints},
-                sort_keys=True,
-                indent=2,
-            )
-            + "\n",
-            encoding="utf-8",
-        )
         cached_manifest = {
             "schema_version": 1,
             "source_fingerprints": source.fingerprints,
             "prepared_sha256": _sha256(destination / "hourly.csv"),
         }
-        manifest_path.write_text(
-            json.dumps(cached_manifest, sort_keys=True, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        self._write_json(manifest_path, cached_manifest)
         self._source = source
         self._history = None
         return destination
@@ -410,6 +479,105 @@ class Application:
             parameters["iterations"] = int(iterations)
         return parameters
 
+    @staticmethod
+    def _dependency_identity() -> dict[str, str]:
+        versions: dict[str, str] = {}
+        for package in ("numpy", "pandas", "catboost"):
+            try:
+                versions[package] = importlib.metadata.version(package)
+            except importlib.metadata.PackageNotFoundError:
+                continue
+        return versions
+
+    @staticmethod
+    def _predictor_code_identity() -> dict[str, str]:
+        functions = {
+            "train": Application.train,
+            "ensure_model": Application._ensure_model,
+            "load_active_model": Application._load_active_model,
+            "model_diagnostics": Application._model_diagnostics,
+            "past_backtest_metrics": Application._past_backtest_metrics,
+            "build_features": FeaturePipeline.build,
+            "predict": ForecastModel.predict,
+        }
+        return {
+            name: hashlib.sha256(marshal.dumps(function.__code__)).hexdigest()
+            for name, function in functions.items()
+            if getattr(function, "__code__", None) is not None
+        }
+
+    def _active_model_identity(
+        self, mode: str, origin: datetime | pd.Timestamp
+    ) -> dict[str, Any] | None:
+        """Check the active model's declared identity and file hashes without loading it."""
+        path = self._active_model_path(mode)
+        try:
+            pointer = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(pointer, dict):
+                return None
+            if (
+                pointer.get("source_fingerprint") != self._source_identity()
+                or pointer.get("mode") != mode
+                or pointer.get("weather_source") != self._snapshot_identity
+                or pointer.get("parameters") != self._model_parameters()
+                or not pointer.get("training_fingerprint")
+            ):
+                return None
+            prefix = (self.settings.model_dir / pointer["model_prefix"]).resolve()
+            model_root = self.settings.model_dir.resolve()
+            if model_root not in prefix.parents:
+                return None
+            metadata = json.loads(_metadata_path(prefix).read_text(encoding="utf-8"))
+            if not isinstance(metadata, dict):
+                return None
+            if (
+                metadata.get("training_fingerprint") != pointer["training_fingerprint"]
+                or metadata.get("parameters") != self._model_parameters()
+                or metadata.get("catboost_version")
+                != self._dependency_identity().get("catboost")
+            ):
+                return None
+            model_files = metadata.get("model_files")
+            hashes = metadata.get("sha256")
+            if not isinstance(model_files, dict) or set(model_files) != {"p10", "p50", "p90"}:
+                return None
+            if not isinstance(hashes, dict):
+                return None
+            verified_hashes: dict[str, str] = {}
+            for quantile, filename in model_files.items():
+                if filename != f"{prefix.name}.{quantile}.cbm":
+                    return None
+                model_path = prefix.parent / filename
+                expected_hash = hashes.get(filename)
+                if (
+                    not isinstance(expected_hash, str)
+                    or not model_path.is_file()
+                    or _sha256(model_path) != expected_hash
+                ):
+                    return None
+                verified_hashes[quantile] = expected_hash
+
+            cutoff_values: dict[str, str] = {}
+            request_origin = pd.Timestamp(origin)
+            if request_origin.tzinfo is None:
+                return None
+            request_origin = request_origin.tz_convert("UTC")
+            for field in ("training_cutoff", "calibration_cutoff"):
+                value = metadata.get(field)
+                if not value:
+                    return None
+                cutoff = pd.Timestamp(value)
+                if cutoff.tzinfo is None or cutoff.tz_convert("UTC") > request_origin:
+                    return None
+                cutoff_values[field] = cutoff.tz_convert("UTC").isoformat()
+            return {
+                "training_fingerprint": pointer["training_fingerprint"],
+                **cutoff_values,
+                "model_file_hashes": verified_hashes,
+            }
+        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+            return None
+
     def train(
         self,
         *,
@@ -480,7 +648,7 @@ class Application:
         if calibration_rows_frame.empty:
             raise ValueError("insufficient_historical_calibration_rows")
 
-        baseline_strategy, baseline_scores = self._select_calibration_baseline(
+        baseline_strategy, baseline_scores, baseline_calibrations = self._select_calibration_baseline(
             history, calibration_rows_frame, calibration_snapshots
         )
         baseline_pointer = {
@@ -490,6 +658,10 @@ class Application:
             "source_fingerprint": self._source_identity(),
             "strategy": baseline_strategy,
             "calibration_scores": baseline_scores,
+            "baseline_calibrations": baseline_calibrations,
+            "calibration_cutoff": pd.to_datetime(
+                calibration_rows_frame["target_end"], utc=True
+            ).max().isoformat(),
         }
         self._write_json(self._baseline_selection_path(selected_mode), baseline_pointer)
 
@@ -544,36 +716,98 @@ class Application:
     def _selected_baseline(
         self, mode: str, origin: datetime | pd.Timestamp | None = None
     ) -> str:
+        return str(self._baseline_selection(mode, origin)["strategy"])
+
+    def _baseline_selection(
+        self, mode: str, origin: datetime | pd.Timestamp | None
+    ) -> dict[str, Any]:
+        default = {
+            "strategy": "persistence",
+            "calibration_cutoff": None,
+            "calibration_scores": {},
+            "residual_calibration": fit_residual_calibration(
+                pd.DataFrame(columns=["turbine_id", "target", "prediction"])
+            ),
+            "status": "unavailable_uncalibrated_persistence",
+        }
+        if origin is None:
+            return default
         path = self._baseline_selection_path(mode)
         if not path.is_file():
-            return "persistence"
+            return default
         try:
             value = json.loads(path.read_text(encoding="utf-8"))
+            calibration_cutoff = value.get("calibration_cutoff")
+            scores = value.get("calibration_scores")
             if (
-                value.get("source_fingerprint") == self._source_identity()
-                and value.get("weather_source") == self._snapshot_identity
-                and value.get("mode") == mode
-                and value.get("strategy") in ("persistence", "seasonal", "power_curve")
+                value.get("source_fingerprint") != self._source_identity()
+                or value.get("weather_source") != self._snapshot_identity
+                or value.get("mode") != mode
+                or value.get("strategy") not in ("persistence", "seasonal", "power_curve")
+                or not isinstance(scores, dict)
+                or not calibration_cutoff
             ):
-                calibration_cutoff = value.get("calibration_cutoff")
-                if origin is not None and calibration_cutoff:
-                    if pd.Timestamp(calibration_cutoff) > pd.Timestamp(origin):
-                        return "persistence"
-                return value["strategy"]
+                return default
+            cutoff = pd.Timestamp(calibration_cutoff)
+            request_origin = pd.Timestamp(origin)
+            if (
+                cutoff.tzinfo is None
+                or request_origin.tzinfo is None
+                or cutoff.tz_convert("UTC") > request_origin.tz_convert("UTC")
+            ):
+                return default
+            from wind_forecast.models import select_baseline
+
+            strategy = str(value["strategy"])
+            if select_baseline(scores) != strategy:
+                return default
+            selected_score = scores.get(strategy)
+            if not isinstance(selected_score, dict) or int(selected_score.get("n", 0)) < 1:
+                return default
+            mae = selected_score.get("mae")
+            if mae is None or not np.isfinite(float(mae)) or float(mae) < 0:
+                return default
+            calibrations = value.get("baseline_calibrations")
+            residual_calibration = (
+                calibrations.get(strategy)
+                if isinstance(calibrations, dict)
+                else None
+            )
+            if (
+                not isinstance(residual_calibration, dict)
+                or residual_calibration.get("status") != "calibrated"
+            ):
+                residual_calibration = fit_residual_calibration(
+                    pd.DataFrame(columns=["turbine_id", "target", "prediction"])
+                )
+            return {
+                "strategy": strategy,
+                "calibration_cutoff": cutoff.tz_convert("UTC").isoformat(),
+                "calibration_scores": scores,
+                "residual_calibration": residual_calibration,
+                "status": "selected_from_held_out_labels",
+            }
         except (OSError, TypeError, ValueError, json.JSONDecodeError):
             pass
-        return "persistence"
+        return default
 
     def _select_calibration_baseline(
         self,
         history: pd.DataFrame,
         calibration: pd.DataFrame,
         snapshots: list[tuple[RunRequest, WeatherSnapshot]],
-    ) -> tuple[str, dict[str, dict[str, float | int | None]]]:
+    ) -> tuple[
+        str,
+        dict[str, dict[str, float | int | None]],
+        dict[str, dict[str, Any]],
+    ]:
         from wind_forecast.models import select_baseline
 
         errors: dict[str, list[float]] = {
             "persistence": [], "seasonal": [], "power_curve": []
+        }
+        residual_rows: dict[str, list[pd.DataFrame]] = {
+            strategy: [] for strategy in errors
         }
         for request, snapshot in snapshots:
             origin_rows = calibration.loc[
@@ -594,6 +828,11 @@ class Application:
                 )
                 valid = joined["target"].notna()
                 if valid.any():
+                    residual_rows[strategy].append(
+                        joined.loc[valid, ["turbine_id", "target", "p50"]].rename(
+                            columns={"p50": "prediction"}
+                        )
+                    )
                     errors[strategy].extend(
                         np.abs(
                             joined.loc[valid, "p50"].to_numpy(dtype=float)
@@ -606,17 +845,28 @@ class Application:
                 "mae": float(np.mean(values)) if values else None,
                 "n": len(values),
             }
-        return select_baseline(scores), scores
+        calibrations: dict[str, dict[str, Any]] = {}
+        empty = pd.DataFrame(columns=["turbine_id", "target", "prediction"])
+        for strategy, frames in residual_rows.items():
+            rows = pd.concat(frames, ignore_index=True) if frames else empty
+            calibrations[strategy] = fit_residual_calibration(rows)
+        return select_baseline(scores), scores, calibrations
 
     @staticmethod
     def _write_json(path: Path, payload: dict[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = path.with_name(f".{path.name}.tmp")
-        temp_path.write_text(
-            json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False) + "\n",
-            encoding="utf-8",
-        )
-        temp_path.replace(path)
+        descriptor, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+        temp_path = Path(temp_name)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                json.dump(payload, stream, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False)
+                stream.write("\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temp_path, path)
+        finally:
+            if temp_path.exists():
+                temp_path.unlink()
 
     def _load_active_model(
         self, mode: str, origin: datetime | pd.Timestamp | None = None
@@ -662,35 +912,94 @@ class Application:
             self.last_training_error = type(exc).__name__
             return None
 
+    @staticmethod
+    def _weather_provenance_class(provenance: Mapping[str, Any]) -> str:
+        status = provenance.get("provenance_status")
+        if status == "synthetic":
+            return "synthetic"
+        if status == "verified" and provenance.get("competition_valid") is True:
+            return "verified"
+        return "unverified"
+
+    def _backtest_identity(
+        self,
+        mode: str,
+        snapshots: list[tuple[RunRequest, WeatherSnapshot]],
+    ) -> dict[str, str]:
+        snapshot_rows = [
+            {
+                "origin": pd.Timestamp(request.origin).tz_convert("UTC").isoformat(),
+                "fingerprint": snapshot.fingerprint,
+                "provenance_class": self._weather_provenance_class(snapshot.provenance),
+            }
+            for request, snapshot in snapshots
+        ]
+        classes = {row["provenance_class"] for row in snapshot_rows}
+        provenance_class = next(iter(classes)) if len(classes) == 1 else (
+            "mixed" if classes else "none"
+        )
+        return {
+            "data_source_fingerprint": self._source_identity(),
+            "mode": mode,
+            "weather_source": self._snapshot_identity,
+            "weather_provenance_class": provenance_class,
+            "weather_snapshot_set_fingerprint": _json_hash(snapshot_rows),
+        }
+
+    @staticmethod
+    def _unavailable_backtest_metrics() -> dict[str, Any]:
+        return {
+            "schema_version": 1,
+            "metric_status": "unavailable_no_labels",
+            "evaluation_period": None,
+            "models": [],
+            "coverage": {},
+        }
+
     def _past_backtest_metrics(
-        self, origin: datetime | pd.Timestamp | None = None
+        self,
+        origin: datetime | pd.Timestamp | None = None,
+        mode: str | None = None,
+        provenance: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         metrics_path = self.settings.model_dir / "backtest" / "metrics.json"
         if not metrics_path.is_file():
-            return {
-                "schema_version": 1,
-                "metric_status": "unavailable_no_labels",
-                "evaluation_period": None,
-                "models": [],
-                "coverage": {},
-            }
+            return self._unavailable_backtest_metrics()
         try:
             metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
-            if not metrics.get("evaluation_period"):
+            period = metrics.get("evaluation_period")
+            coverage = metrics.get("coverage")
+            identity = coverage.get("identity") if isinstance(coverage, dict) else None
+            selected_mode = mode or self.settings.mode
+            current_provenance_class = self._weather_provenance_class(
+                provenance or ({"provenance_status": "synthetic"} if self.offline else {})
+            )
+            if (
+                not isinstance(period, dict)
+                or not isinstance(identity, dict)
+                or coverage.get("evidence_scope") != "historical_backtest"
+                or identity.get("data_source_fingerprint") != self._source_identity()
+                or identity.get("mode") != selected_mode
+                or identity.get("weather_source") != self._snapshot_identity
+                or identity.get("weather_provenance_class") != current_provenance_class
+                or coverage.get("evidence_class")
+                != ("competition" if selected_mode == "competition" else "demo_only")
+                or (selected_mode == "demo" and coverage.get("competition_valid") is not False)
+                or (selected_mode == "competition" and coverage.get("competition_valid") is not True)
+            ):
                 raise ValueError("missing evaluation period")
             if origin is not None:
-                evaluation_end = pd.Timestamp(metrics["evaluation_period"].get("end"))
-                if evaluation_end.tzinfo is None or evaluation_end > pd.Timestamp(origin):
+                evaluation_end = pd.Timestamp(period.get("end"))
+                request_origin = pd.Timestamp(origin)
+                if (
+                    evaluation_end.tzinfo is None
+                    or request_origin.tzinfo is None
+                    or evaluation_end.tz_convert("UTC") > request_origin.tz_convert("UTC")
+                ):
                     raise ValueError("backtest metrics follow forecast origin")
             return metrics
-        except (OSError, ValueError, json.JSONDecodeError):
-            return {
-                "schema_version": 1,
-                "metric_status": "unavailable_no_labels",
-                "evaluation_period": None,
-                "models": [],
-                "coverage": {},
-            }
+        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+            return self._unavailable_backtest_metrics()
 
     def run(self, request: RunRequest, refresh: bool = False) -> RunResult:
         """Run one request with shared data, model, agent, and artifact services."""
@@ -702,39 +1011,30 @@ class Application:
         if self.weather_fixture is not None and parsed.mode != "demo":
             raise ValueError("weather fixture is only allowed in demo mode")
         all_history = self._load_history()
-        model = self._ensure_model(parsed.mode, parsed.origin)
         history = all_history.loc[
             all_history["available_at"].le(pd.Timestamp(parsed.origin))
         ].copy()
         baseline: BaselineModel | None = None
 
-        def _feature_frame(rows: pd.DataFrame, snapshot: WeatherSnapshot, req: RunRequest) -> pd.DataFrame:
-            return self.feature_pipeline.build(rows, snapshot, req)
-
-        def _predict(rows: pd.DataFrame, snapshot: WeatherSnapshot, req: RunRequest):
-            features = _feature_frame(rows, snapshot, req)
-            if model is None:
-                raise RuntimeError("forecast_model_unavailable")
-            prediction = model.predict(features)
-            prediction.diagnostics.update(self._model_diagnostics(model, history, req))
-            prediction.diagnostics["metrics"] = self._past_backtest_metrics(req.origin)
-            return prediction
-
         def _predict_baseline(rows: pd.DataFrame, snapshot: WeatherSnapshot, req: RunRequest):
             nonlocal baseline
-            features = _feature_frame(rows, snapshot, req)
+            features = self.feature_pipeline.build(rows, snapshot, req)
             if baseline is None:
                 baseline = BaselineModel.fit(rows, req.origin)
-            strategy = self._selected_baseline(req.mode, req.origin)
+            selection = self._baseline_selection(req.mode, req.origin)
+            strategy = str(selection["strategy"])
+            residual_calibration = selection["residual_calibration"]
+            baseline.residual_calibrations[strategy] = residual_calibration
             prediction = baseline.predict(features, strategy)
             data_quality = self._data_quality(rows, req.origin)
+            calibration_status = str(residual_calibration.get("status", "unavailable"))
             prediction.diagnostics.update(
                 {
                     "model_parameters": {"strategy": strategy},
                     "seed": None,
                     "training_cutoff": req.origin.isoformat(),
                     "training_rows": len(rows),
-                    "calibration_cutoff": None,
+                    "calibration_cutoff": selection["calibration_cutoff"],
                     "model_training_rows_fingerprint": self._source_identity(),
                     "feature_schema": list(FEATURE_COLUMNS),
                     "config_fingerprint": _json_hash(
@@ -743,14 +1043,30 @@ class Application:
                     "dependency_versions": {},
                     "data_quality": data_quality,
                     "degraded": bool(data_quality["stale_observations"]),
-                    "metrics": self._past_backtest_metrics(req.origin),
+                    "calibration": {
+                        "status": calibration_status,
+                        "method": (
+                            "held_out_baseline_residuals"
+                            if calibration_status == "calibrated"
+                            else "unavailable_uncalibrated_bounds"
+                        ),
+                        "strategy": strategy,
+                        "selection_status": selection["status"],
+                        "cutoff": selection["calibration_cutoff"],
+                        "sample_count": int(residual_calibration.get("n", 0)),
+                        "baseline_selection_scores": selection["calibration_scores"],
+                    },
+                    "metrics": self._past_backtest_metrics(
+                        req.origin, req.mode, snapshot.provenance
+                    ),
                 }
             )
             return prediction
 
+        predictor = _ApplicationPredictor(self, parsed)
         agent = ForecastAgent(
             self.weather_provider,
-            _predict,
+            predictor,
             self.analyzer,
             self.store,
             baseline_predictor=_predict_baseline,
@@ -782,10 +1098,21 @@ class Application:
 
     @staticmethod
     def _data_quality(history: pd.DataFrame, cutoff: datetime | pd.Timestamp | None) -> dict[str, Any]:
-        latest = pd.to_datetime(history["available_at"], utc=True).max() if not history.empty else None
+        available = (
+            pd.to_datetime(history["available_at"], utc=True, errors="coerce")
+            if not history.empty and "available_at" in history
+            else pd.Series(dtype="datetime64[ns, UTC]")
+        )
         cutoff_stamp = pd.Timestamp(cutoff) if cutoff is not None else None
+        if cutoff_stamp is not None:
+            if cutoff_stamp.tzinfo is None:
+                cutoff_stamp = cutoff_stamp.tz_localize("UTC")
+            else:
+                cutoff_stamp = cutoff_stamp.tz_convert("UTC")
+            available = available.loc[available.le(cutoff_stamp)]
+        latest = available.max() if not available.empty else None
         age = (
-            max(0.0, (cutoff_stamp - latest).total_seconds() / 3600)
+            (cutoff_stamp - latest).total_seconds() / 3600
             if cutoff_stamp is not None and latest is not None and pd.notna(latest)
             else None
         )
@@ -824,7 +1151,7 @@ class Application:
             history,
             snapshots,
             origins,
-            self.settings.model_dir / "backtest" / "models",
+            self.settings.model_dir / "backtest-folds",
             model_parameters=self._model_parameters(iterations),
             calibration_days=calibration_days,
         )
@@ -834,12 +1161,26 @@ class Application:
             and snapshot.provenance.get("competition_valid") is True
             for _, snapshot in snapshots
         )
+        metric_identity = self._backtest_identity(selected_mode, snapshots)
+        metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+        coverage = metrics.setdefault("coverage", {})
+        coverage.update(
+            {
+                "identity": metric_identity,
+                "evidence_scope": "historical_backtest",
+                "evidence_class": (
+                    "competition"
+                    if selected_mode == "competition" and weather_verified
+                    else "demo_only"
+                ),
+                "forecast_target_metric_status": "unavailable_no_labels",
+            }
+        )
         if not weather_verified:
-            metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
             metrics["metric_status"] = "unavailable_unverified_weather"
             metrics["models"] = []
-            metrics.setdefault("coverage", {})["competition_valid"] = False
-            self._write_json(metrics_path, metrics)
+        coverage["competition_valid"] = selected_mode == "competition" and weather_verified
+        self._write_json(metrics_path, metrics)
         return metrics_path
 
     def simulate(

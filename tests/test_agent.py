@@ -515,6 +515,67 @@ def test_staged_predictor_trace_times_real_stages_and_keeps_untrusted_reason_out
     assert "validated_action:finalize" in store.persisted[0]["report"]
 
 
+def test_staged_refresh_uses_trained_model_identity_and_invalidates_changes(tmp_path: Path) -> None:
+    request = _request()
+    snapshot = make_synthetic_weather_snapshot(request)
+    store = ArtifactStore(tmp_path)
+    calls: list[str] = []
+
+    class StagedPredictor:
+        model_identity: str | None = None
+        trained_identity = "model-v1"
+
+        @property
+        def reuse_identity(self) -> dict[str, Any]:
+            return {"config": "model-config-v1", "model": self.model_identity}
+
+        def prepare(self, history: pd.DataFrame, weather: Any, req: Any) -> pd.DataFrame:
+            calls.append("prepare")
+            return history.copy()
+
+        def train_or_load(self, history: pd.DataFrame, features: pd.DataFrame,
+                          weather: Any, req: Any) -> str:
+            calls.append("train_or_load")
+            self.model_identity = self.trained_identity
+            return "model-bundle"
+
+        def predict(self, model_bundle: str, features: pd.DataFrame, req: Any) -> Prediction:
+            calls.append("predict")
+            # A live identity may change after train_or_load; the returned bundle remains v1.
+            self.model_identity = "model-v2"
+            return _prediction(req)
+
+    predictor = StagedPredictor()
+    agent = ForecastAgent(
+        _Provider(snapshot, calls),
+        predictor,
+        _Analyzer(calls, [Decision("finalize", "ok") for _ in range(3)]),
+        store,
+    )
+    history = pd.DataFrame({"power": [0.5]})
+
+    first = agent.run(request, history)
+    stages_after_first = [call for call in calls if call in {"prepare", "train_or_load", "predict"}]
+    predictor.model_identity = "model-v1"
+    refreshed = agent.run(request, history, refresh=True)
+
+    assert first.reused is False
+    assert refreshed.reused is True
+    assert refreshed.run_id == first.run_id
+    assert [call for call in calls if call in {"prepare", "train_or_load", "predict"}] == stages_after_first
+
+    predictor.model_identity = "model-v2"
+    predictor.trained_identity = "model-v2"
+    changed = agent.run(request, history, refresh=True)
+
+    assert changed.reused is False
+    assert changed.run_id != first.run_id
+    assert [call for call in calls if call in {"prepare", "train_or_load", "predict"}] == [
+        "prepare", "train_or_load", "predict",
+        "prepare", "train_or_load", "predict",
+    ]
+
+
 def test_identical_staged_refresh_reuses_prior_forecast_with_its_own_trace(tmp_path: Path) -> None:
     request = _request()
     snapshot = make_synthetic_weather_snapshot(request)
@@ -560,10 +621,9 @@ def test_identical_staged_refresh_reuses_prior_forecast_with_its_own_trace(tmp_p
         len(update_check["details"]["fingerprints"][name]) == 64
         for name in ("data_contents", "canonical_weather", "predictor_config", "predictor_model")
     )
-    first_manifest = json.loads((first.directory / "manifest.json").read_text(encoding="utf-8"))
     original_hashes = {
-        name: hashlib.sha256((first.directory / name).read_bytes()).hexdigest()
-        for name in first_manifest["files"]
+        path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in first.directory.iterdir()
     }
     original_names = {path.name for path in first.directory.iterdir()}
     before_second = list(calls)
@@ -576,8 +636,8 @@ def test_identical_staged_refresh_reuses_prior_forecast_with_its_own_trace(tmp_p
     assert calls == before_second
     assert {path.name for path in first.directory.iterdir()} == original_names
     assert {
-        name: hashlib.sha256((first.directory / name).read_bytes()).hexdigest()
-        for name in first_manifest["files"]
+        path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in first.directory.iterdir()
     } == original_hashes
     reuse_check = json.loads((tmp_path / "update_checks.jsonl").read_text().splitlines()[-1])
     assert reuse_check["reuse_outcome"] == "hit"
