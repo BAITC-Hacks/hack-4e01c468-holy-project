@@ -1,5 +1,5 @@
 ---
-import { Badge, Icon, Sidebar } from '@santi020k/lumen-astro';
+import { Icon, Sidebar } from '@santi020k/lumen-astro';
 import { text } from '../lib/preferences.mjs';
 ---
 
@@ -53,7 +53,6 @@ import { text } from '../lib/preferences.mjs';
         <button class="theme-toggle" type="button" data-theme-toggle aria-label={text('ru', 'switchToDark')} title={text('ru', 'themeLabel')} data-i18n-title="themeLabel" data-i18n-aria-dynamic="themeToggle" aria-pressed="false">
           <Icon name="moon" size="sm" />
         </button>
-        <Badge class="mode-badge" variant="outline" data-mode-badge data-i18n="checkingMode">{text('ru', 'checkingMode')}</Badge>
       </div>
     </header>
     <main id="main-content" class="page-content">

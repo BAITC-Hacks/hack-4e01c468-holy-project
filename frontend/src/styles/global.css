@@ -154,7 +154,6 @@ astro-dev-toolbar { display: none !important; }
 .language-switch button:hover, .language-switch button[aria-pressed="true"] { border-color: hsl(var(--brand) / .12); background: hsl(var(--surface)); color: hsl(var(--brand)); }
 .topbar-actions .theme-toggle { width: 40px; padding: 0; border-color: hsl(var(--line)); background: hsl(var(--surface)); color: hsl(var(--ink-soft)); }
 .topbar-actions .theme-toggle:hover, .topbar-actions .theme-toggle[aria-pressed="true"] { border-color: hsl(var(--brand) / .3); background: hsl(var(--brand-soft)); color: hsl(var(--brand)); }
-.mode-badge { white-space: nowrap; }
 
 .page-content {
   width: 100%;
@@ -233,6 +232,7 @@ astro-dev-toolbar { display: none !important; }
 .metric-card::before { position: absolute; inset: 0 auto 0 0; width: 3px; background: hsl(var(--brand) / .42); content: ''; }
 .metric-card .ui-stat-label { color: hsl(var(--ink-muted)); font-size: 10px; font-weight: 640; line-height: 1.35; }
 .metric-card .ui-stat-value { overflow: hidden; color: hsl(var(--ink)); font-family: var(--font-display); font-size: clamp(18px, 1.6vw, 22px); font-weight: 710; line-height: 1.1; text-overflow: ellipsis; }
+.metric-card[data-stat="weather"] .ui-stat-value { white-space: normal; overflow-wrap: normal; line-height: 1.25; font-size: 17px; }
 
 .run-alert { margin: 0; border-radius: 11px; }
 .run-alert-content { display: flex; align-items: center; gap: 10px; }
@@ -289,6 +289,10 @@ astro-dev-toolbar { display: none !important; }
 .forecast-field.ui-field { min-width: 0; gap: 6px; padding: 0; }
 .forecast-field .ui-label { color: hsl(var(--ink-soft)); font-size: 10px; font-weight: 670; }
 .forecast-field .ui-input, .forecast-field .ui-select { min-height: 42px; height: 42px; border-radius: 8px; background-color: hsl(var(--surface)); color: hsl(var(--ink)); font-size: 11px; }
+.forecast-field .ui-select__list { border-color: hsl(var(--line)); border-radius: 8px; background: hsl(var(--surface)); color: hsl(var(--ink)); }
+.forecast-field .ui-select__list [role="option"] { min-height: 40px; color: hsl(var(--ink-soft)); }
+.forecast-field .ui-select__list [role="option"]:is(:hover, :focus-visible), .forecast-field .ui-select__list [role="option"][aria-selected="true"] { background: hsl(var(--brand-soft)); color: hsl(var(--brand-solid)); }
+.forecast-field .ui-select__trigger:focus-visible { outline: 3px solid hsl(var(--brand) / .28); outline-offset: 2px; }
 .forecast-field small { color: hsl(var(--ink-muted)); font-size: 9px; line-height: 1.4; }
 .form-actions { display: grid; gap: 8px; padding-top: 2px; }
 .form-actions .action-button, .job-recovery .action-button { width: 100%; min-height: 42px; justify-content: center; border-radius: 8px; font-size: 11px; }
@@ -318,6 +322,9 @@ astro-dev-toolbar { display: none !important; }
 .forecast-table td, .forecast-table th, .metrics-table td, .metrics-table th { border-bottom: 1px solid hsl(var(--line) / .75); padding: 10px 12px; white-space: nowrap; }
 .forecast-table tbody tr:last-child td, .metrics-table tbody tr:last-child td { border-bottom: 0; }
 .forecast-table tbody tr:nth-child(even), .metrics-table tbody tr:nth-child(even) { background: hsl(var(--surface-muted) / .42); }
+.forecast-table-scroll { height: min(24rem, 58vh); min-height: 12rem; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.forecast-table-scroll .ui-table-wrap { overflow: visible; }
+.forecast-table thead th { position: sticky; z-index: 1; top: 0; background: hsl(var(--surface)); box-shadow: 0 1px hsl(var(--line)); }
 .table-loading, .empty-cell { color: hsl(var(--ink-muted)); font-size: 11px; }
 .inline-empty { border: 1px dashed hsl(var(--line)); border-radius: 10px; background: hsl(var(--surface-muted) / .45); }
 .inline-empty h3 { color: hsl(var(--ink)); font-size: 14px; }
@@ -409,7 +416,6 @@ astro-dev-toolbar { display: none !important; }
   .language-switch { gap: 1px; padding: 2px; }
   .language-switch button { min-width: 35px; min-height: 34px; font-size: 9px; }
   .topbar-actions .theme-toggle { width: 38px; }
-  .mode-badge { min-height: 22px; padding-inline: 7px; font-size: 9px; }
   .page-content { padding: 18px 14px 22px; }
   .dashboard-content { gap: 20px; }
   .overview-section { gap: 12px; }
@@ -454,7 +460,6 @@ astro-dev-toolbar { display: none !important; }
   .topbar-actions { gap: 4px; }
   .language-switch button { min-width: 32px; }
   .topbar-actions .theme-toggle { width: 36px; min-width: 36px; }
-  .mode-badge { padding-inline: 6px; font-size: 8px; }
   .page-content { padding-inline: 12px; }
   .hero-capabilities { column-gap: 8px !important; }
   .hero-capabilities li { gap: 4px; font-size: 8px; }

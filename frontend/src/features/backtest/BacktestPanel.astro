@@ -1,5 +1,5 @@
 ---
-import { Badge, Card, Empty, Icon, Table } from '@santi020k/lumen-astro';
+import { Badge, Card, Empty, Table } from '@santi020k/lumen-astro';
 import SectionHeader from '../../components/SectionHeader.astro';
 import { text } from '../../lib/preferences.mjs';
 
@@ -36,6 +36,5 @@ const t = (key: Parameters<typeof text>[1]) => text('ru', key);
         </Table>
       </div>
     </div>
-    <p class="evidence-footnote"><Icon name="info" size="sm" /> <span data-i18n="noFebruaryTruth">{t('noFebruaryTruth')}</span></p>
   </Card>
 </section>

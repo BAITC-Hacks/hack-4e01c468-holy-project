@@ -6,7 +6,7 @@ import { renderBacktest } from '../features/backtest/render';
 import { renderDataQuality } from '../features/data-quality/render';
 import { renderForecastViews } from '../features/forecast/render';
 import { readLocale, readTheme, resolveTheme, saveLocale, text, toggleTheme } from './preferences.mjs';
-import type { DashboardWorkflow, ForecastRequest, HealthView, RunView } from './types';
+import type { DashboardWorkflow, ForecastRequest, RunView } from './types';
 
 const pollDelayMs = 2_000;
 const maxPollsPerAttempt = 120;
@@ -44,11 +44,11 @@ function setRecovery(form: HTMLFormElement, visible: boolean, busy: boolean): vo
   if (button) button.disabled = !visible || busy;
 }
 
-function updateViews(run: RunView | null, health: HealthView | null, latestFailure: string | null, locale: 'ru' | 'kk'): void {
-  renderForecastViews(run, health, latestFailure, locale);
+function updateViews(run: RunView | null, latestFailure: string | null, locale: 'ru' | 'kk'): void {
+  renderForecastViews(run, latestFailure, locale);
   renderBacktest(run, locale);
   renderAgentTrace(run, locale);
-  renderDataQuality(run, health, locale);
+  renderDataQuality(run, locale);
 }
 
 function currentRunMessage(state: DashboardWorkflow, locale: 'ru' | 'kk'): { message: string; outcome: 'info' | 'success' | 'warning' | 'failed' } {
@@ -103,6 +103,15 @@ function applyStaticTranslations(locale: 'ru' | 'kk', theme: 'light' | 'dark'): 
     const option48 = horizon.querySelector<HTMLOptionElement>('option[value="48"]');
     if (option24) option24.textContent = text(locale, 'hours24');
     if (option48) option48.textContent = text(locale, 'hours48');
+
+    const selectRoot = horizon.closest<HTMLElement>('[data-ui-select]');
+    const labels = new Map([...horizon.options].map((option) => [option.value, option.label]));
+    for (const option of selectRoot?.querySelectorAll<HTMLElement>('[data-ui-select-option]') ?? []) {
+      const label = labels.get(option.dataset.value ?? '');
+      if (label) option.textContent = label;
+    }
+    const selectedValue = selectRoot?.querySelector<HTMLElement>('[data-ui-select-value]');
+    if (selectedValue && horizon.selectedOptions[0]) selectedValue.textContent = horizon.selectedOptions[0].label;
   }
   const title = document.querySelector<HTMLElement>('title');
   if (title) title.textContent = text(locale, 'appTitle');
@@ -162,7 +171,6 @@ export function startDashboard(): void {
   form.addEventListener('input', () => { formTouched = true; });
   form.addEventListener('change', () => { formTouched = true; });
 
-  let health: HealthView | null = null;
   let latestFailure: string | null = null;
   let requestFailure: string | null = null;
   let validationMessageKey: string | null = null;
@@ -187,7 +195,7 @@ export function startDashboard(): void {
 
   const render = (): void => {
     updateApiStatus(apiConnected, apiStatusKey);
-    updateViews(workflow.selectedRun, health, latestFailure, locale);
+    updateViews(workflow.selectedRun, latestFailure, locale);
     renderJobState(workflow, form, paused, polling, locale);
     if (requestFailure && !workflow.job) setFeedback(form, apiErrorMessage(requestFailure, locale), 'failed');
     else if (validationMessageKey) setFeedback(form, text(locale, validationMessageKey), 'warning');
@@ -224,13 +232,18 @@ export function startDashboard(): void {
     if (latestRetry) latestRetry.hidden = true;
     updateApiStatus(false, 'connecting');
     try {
-      health = await getHealth();
+      await getHealth();
       const run = await getLatestRun();
       if (run && !formTouched) {
         const savedOrigin = run.manifest.forecast_origin ?? run.forecast[0]?.forecast_origin;
         if (origin && typeof savedOrigin === 'string') origin.value = formatAlmatyDateTime(new Date(savedOrigin));
         const horizon = form.elements.namedItem('horizon') as HTMLSelectElement | null;
-        if (horizon && (run.manifest.horizon === 24 || run.manifest.horizon === 48)) horizon.value = String(run.manifest.horizon);
+        if (horizon && (run.manifest.horizon === 24 || run.manifest.horizon === 48)) {
+          horizon.value = String(run.manifest.horizon);
+          // Keep Lumen's native-select sync listener informed without treating this
+          // saved-run restoration as a user edit on the parent form.
+          horizon.dispatchEvent(new Event('change'));
+        }
       }
       latestFailure = null;
       requestFailure = null;
@@ -312,7 +325,7 @@ export function startDashboard(): void {
     validationMessageKey = null;
     paused = false;
     polling = false;
-    updateViews(null, health, null, locale);
+    updateViews(null, null, locale);
     setFeedback(form, text(locale, 'requestSubmitting'), 'info');
     renderJobState(workflow, form, paused, polling, locale);
 

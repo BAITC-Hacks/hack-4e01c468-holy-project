@@ -19,9 +19,9 @@ from typing import Any, Iterator
 import numpy as np
 import pandas as pd
 
-from wind_forecast.agent import quality_gate
+from wind_forecast.application.forecasting.quality import quality_gate
 from wind_forecast.contracts import Prediction, RunRequest, RunResult, WeatherSnapshot
-from wind_forecast.weather import weather_fingerprint
+from wind_forecast.application.forecasting.weather_policy import weather_fingerprint
 
 _FORECAST_COLUMNS = [
     "run_id",

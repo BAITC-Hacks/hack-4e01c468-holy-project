@@ -14,7 +14,7 @@ role report with progress and blockers.
 | P0 | T8 real Astro/Lumen frontend | orchestrator | done | Reference composition, RU/KK, light/dark; browser8cases + actual NOAA E2E passed |
 | P0 | T9 acceptance/docs | orchestrator | active | Russian README + validationflow done;246Python tests; full real GFS ML/backtest/month remains |
 | P0 | T11 NOAA weather/source wiring | orchestrator | done | Full48h realweather verified + applicationbaseline; sourceisolation reviewed |
-| P1 | T12 GFS ML calibration/backtest/month | unassigned | ready | Needs explicit archive budget; don't reuse other source model or claim completed |
+| P0 | T12 GFS ML calibration/backtest/month | orchestrator | active | User requested CatBoost; bounded17-origin NOAA download/training session7625, Jan12–25 train/Jan26–28 calibration; review delegated. Backtest/month remain separate |
 | P0 | T10 incremental architecture redesign | orchestrator | done | Batch1 bootstrap/ports and stable identity fix accepted by Astra; further stages retained for gradual work |
 
 Allowed statuses: `ready`, `active`, `blocked`, `review`, `done`.

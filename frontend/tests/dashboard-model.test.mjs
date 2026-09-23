@@ -4,11 +4,34 @@ import * as dashboardModel from '../src/lib/dashboard-model.mjs';
 
 const { apiErrorMessage, eventActionLabel, runStatusLabel } = dashboardModel;
 
+test('displays readable weather names in Russian and Kazakh', () => {
+  assert.equal(dashboardModel.weatherSourceLabel('noaa_gfs_0p25', 'ru'), 'NOAA GFS · сетка 0,25°');
+  assert.equal(dashboardModel.weatherSourceLabel('noaa_gfs_0p25', 'kk'), 'NOAA GFS · 0,25° тор');
+  assert.equal(dashboardModel.weatherSourceLabel('noaa-gfs-public-s3-range', 'ru'), 'NOAA · открытый архив прогнозов');
+  assert.equal(dashboardModel.weatherSourceLabel('ecmwf_ifs', 'ru'), 'ECMWF IFS');
+  assert.equal(dashboardModel.weatherSourceLabel('synthetic-demo', 'ru'), 'Синтетическая модель погоды');
+  assert.equal(dashboardModel.weatherSourceLabel('synthetic-test', 'kk'), 'Синтетикалық ауа райы моделі');
+  assert.equal(dashboardModel.weatherSourceLabel(null, 'ru'), 'Недоступно');
+});
+
+test('detects synthetic provenance without using API mode as a proxy', () => {
+  assert.equal(dashboardModel.isSyntheticWeatherProvenance({ provenance_status: 'synthetic' }), true);
+  assert.equal(dashboardModel.isSyntheticWeatherProvenance({ weather_model: 'synthetic-demo' }), true);
+  assert.equal(dashboardModel.isSyntheticWeatherProvenance({ provider: 'local-synthetic-generator' }), true);
+  assert.equal(dashboardModel.isSyntheticWeatherProvenance({ weather_model: 'noaa_gfs_0p25' }), false);
+});
+
 test('names actual agent stages separately from their outcomes', () => {
   assert.equal(eventActionLabel('train_or_load_model', 'ru'), 'Расчёт модели');
   assert.equal(eventActionLabel('check_for_updates', 'ru'), 'Проверка обновлений');
   assert.equal(eventActionLabel('quality_gate', 'kk'), 'Сапаны тексеру');
   assert.equal(eventActionLabel('persist_run', 'ru'), 'Сохранение результата');
+});
+
+test('names the baseline action without changing its recorded outcome', () => {
+  assert.equal(eventActionLabel('use_baseline', 'ru'), 'Применение базовой модели');
+  assert.equal(eventActionLabel('use_baseline', 'kk'), 'Негізгі модельді қолдану');
+  assert.equal(dashboardModel.eventOutcomeLabel('skipped', 'ru'), 'пропущено');
 });
 
 test('maps known transport failures into the selected interface language', () => {
@@ -31,10 +54,6 @@ test('maps user-facing API error codes to Russian and Kazakh text', () => {
   assert.equal(apiErrorMessage('invalid_request', 'ru'), 'Проверьте параметры прогноза и повторите запрос.');
   assert.equal(apiErrorMessage('job_already_running', 'kk'), 'Болжам тапсырмасы орындалып жатыр. Оның күйін тексеріңіз.');
   assert.equal(apiErrorMessage('run_not_found', 'kk'), 'Сұрауды орындау мүмкін болмады. Қайталап көріңіз.');
-});
-
-test('does not label an unknown API mode as demo', () => {
-  assert.equal(dashboardModel.apiModeLabel('mystery', false, 'kk'), 'Қолжетімсіз');
 });
 
 test('formats forecast fractions with localized decimal separators and empty values', () => {

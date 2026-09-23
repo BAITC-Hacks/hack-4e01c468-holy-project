@@ -1,9 +1,9 @@
-import { apiErrorMessage, apiModeLabel, forecastSummary, formatPercentage, runStatusLabel } from '../../lib/dashboard-model.mjs';
+import { apiErrorMessage, forecastSummary, formatPercentage, isSyntheticWeatherProvenance, runStatusLabel, weatherSourceLabel } from '../../lib/dashboard-model.mjs';
 import { forecastCsvUrl } from '../../lib/api';
 import { escapeHtml, renderForecastChart } from './chart.mjs';
 import { asRecord, displayValue, formatAlmaty, turbineName } from '../../lib/format';
 import { text } from '../../lib/preferences.mjs';
-import type { ForecastRow, HealthView, RunView } from '../../lib/types';
+import type { ForecastRow, RunView } from '../../lib/types';
 
 function setText(selector: string, value: string): void {
   const node = document.querySelector<HTMLElement>(selector);
@@ -37,12 +37,11 @@ function weatherName(run: RunView | null, locale: 'ru' | 'kk'): string {
   if (!run) return text(locale, 'unavailable');
   const manifestWeather = asRecord(asRecord(run.manifest).weather_provenance);
   const rowWeather = run.forecast.find((row) => typeof row.weather_model === 'string')?.weather_model;
-  return displayValue(manifestWeather.weather_model ?? rowWeather, locale);
+  return weatherSourceLabel(manifestWeather.weather_model ?? rowWeather, locale);
 }
 
 function alertContent(
   run: RunView | null,
-  health: HealthView | null,
   failure: string | null,
   locale: 'ru' | 'kk',
 ): { outcome: string; message: string } | null {
@@ -59,8 +58,10 @@ function alertContent(
     return { outcome: 'degraded', message: text(locale, 'forecastDegradedAlert') };
   }
   const competitionValid = asRecord(run.manifest).competition_valid;
-  if (health?.mode === 'demo' || health?.offline) {
-    return { outcome: 'info', message: text(locale, 'demoAlert') };
+  const weather = asRecord(asRecord(run.manifest).weather_provenance);
+  const rowWeatherModel = run.forecast.find((row) => typeof row.weather_model === 'string')?.weather_model;
+  if (isSyntheticWeatherProvenance(weather, rowWeatherModel)) {
+    return { outcome: 'warning', message: text(locale, 'syntheticDataAlert') };
   }
   if (competitionValid === false) {
     return { outcome: 'degraded', message: text(locale, 'eligibilityAlert') };
@@ -68,11 +69,11 @@ function alertContent(
   return null;
 }
 
-function showAlert(run: RunView | null, health: HealthView | null, failure: string | null, locale: 'ru' | 'kk'): void {
+function showAlert(run: RunView | null, failure: string | null, locale: 'ru' | 'kk'): void {
   const alert = document.querySelector<HTMLElement>('[data-run-alert]');
   const message = alert?.querySelector<HTMLElement>('[data-run-alert-text]');
   const retry = alert?.querySelector<HTMLButtonElement>('[data-latest-retry]');
-  const content = alertContent(run, health, failure, locale);
+  const content = alertContent(run, failure, locale);
   if (!alert || !message) return;
   if (!content) {
     alert.hidden = true;
@@ -119,7 +120,6 @@ function renderForecastTable(run: RunView | null, failure: string | null, locale
 
 export function renderForecastViews(
   run: RunView | null,
-  health: HealthView | null,
   failure: string | null = null,
   locale: 'ru' | 'kk' = 'ru',
 ): void {
@@ -129,8 +129,6 @@ export function renderForecastViews(
   updateBadge(document.querySelector('.chart-context-detail .run-status'), run ? runStatusLabel(run.status, locale) : text(locale, 'noRun'), outcome);
   updateBadge(document.querySelector('.context-heading .run-status'), run ? runStatusLabel(run.status, locale) : text(locale, 'noRun'), outcome);
 
-  const modeBadge = document.querySelector<HTMLElement>('[data-mode-badge]');
-  if (modeBadge && health) modeBadge.textContent = apiModeLabel(health.mode, health.offline, locale);
   setText('[data-run-id]', run?.run_id ?? '—');
   setText('[data-selected-run]', run?.run_id ?? (failure ? text(locale, 'apiUnavailableAlert') : text(locale, 'noRunSelected')));
   setText('[data-run-origin]', run ? formatAlmaty(getOrigin(run), locale) : '—');
@@ -156,6 +154,6 @@ export function renderForecastViews(
   setText('[data-summary-output="turbine_1"]', summary.turbine_1);
   setText('[data-summary-output="turbine_2"]', summary.turbine_2);
   setText('[data-summary-row-count]', summary.rowCount);
-  showAlert(run, health, failure, locale);
+  showAlert(run, failure, locale);
   renderForecastTable(run, failure, locale);
 }

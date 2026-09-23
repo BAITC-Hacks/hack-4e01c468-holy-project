@@ -7,8 +7,8 @@ from datetime import datetime, timedelta, timezone
 import numpy as np
 import pandas as pd
 
+from wind_forecast.application.forecasting.weather_policy import validate_weather
 from wind_forecast.contracts import RunRequest, WeatherSnapshot
-from wind_forecast.weather import validate_weather
 
 TURBINE_IDS: tuple[str, str] = ("turbine_1", "turbine_2")
 WEATHER_COLUMNS: tuple[str, ...] = (

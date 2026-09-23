@@ -1,5 +1,5 @@
 ---
-import { Alert, Button, Card, Chart, Field, Icon, Input, Label, NativeSelect, Skeleton } from '@santi020k/lumen-astro';
+import { Alert, Button, Card, Chart, Field, Icon, Input, Label, Select, Skeleton } from '@santi020k/lumen-astro';
 import MetricCard from '../../components/MetricCard.astro';
 import SectionHeader from '../../components/SectionHeader.astro';
 import StatusBadge from '../../components/StatusBadge.astro';
@@ -110,10 +110,11 @@ const t = (key: Parameters<typeof text>[1]) => text('ru', key);
             <small id="origin-help"><span data-i18n="hourlyBoundary">{t('hourlyBoundary')}</span> · <span data-local-timezone>{t('localTimezone')}</span></small>
           </Field>
           <Field class="forecast-field">
-            <Label for="horizon" data-i18n="horizonLabel">{t('horizonLabel')}</Label>
-            <NativeSelect
+            <Label id="horizon-label" for="horizon" data-i18n="horizonLabel">{t('horizonLabel')}</Label>
+            <Select
               id="horizon"
               name="horizon"
+              aria-labelledby="horizon-label"
               value="24"
               options={[
                 { label: t('hours24'), value: '24' },

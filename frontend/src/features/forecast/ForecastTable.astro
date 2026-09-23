@@ -25,7 +25,7 @@ const t = (key: Parameters<typeof text>[1]) => text('ru', key);
         <Icon name="download" size="sm" /> <span data-i18n="downloadCsv">{t('downloadCsv')}</span>
       </a>
     </div>
-    <div class="table-scroll" tabindex="0" aria-label={t('scrollForecastTable')} data-i18n-aria="scrollForecastTable">
+    <div class="table-scroll forecast-table-scroll" tabindex="0" aria-label={t('scrollForecastTable')} data-i18n-aria="scrollForecastTable">
       <Table>
         <table class="forecast-table">
         <caption data-i18n="forecastTableCaption">{t('forecastTableCaption')}</caption>

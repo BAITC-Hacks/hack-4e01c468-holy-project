@@ -1,5 +1,22 @@
 import { text } from './preferences.mjs';
 
+export function weatherSourceLabel(value, locale) {
+  if (value === 'noaa_gfs_0p25') return text(locale, 'weatherNoaaGfs');
+  if (value === 'noaa-gfs-public-s3-range') return text(locale, 'weatherNoaaArchive');
+  if (value === 'ecmwf_ifs') return 'ECMWF IFS';
+  if (value === 'open-meteo-single-runs') return 'Open-Meteo';
+  if (typeof value === 'string' && value.startsWith('synthetic-')) return text(locale, 'syntheticWeatherModel');
+  return typeof value === 'string' && value.trim() ? value : text(locale, 'unavailable');
+}
+
+export function isSyntheticWeatherProvenance(provenance, rowWeatherModel) {
+  if (!provenance || typeof provenance !== 'object' || Array.isArray(provenance)) return false;
+  const weatherModel = provenance.weather_model ?? rowWeatherModel;
+  return provenance.provenance_status === 'synthetic'
+    || provenance.provider === 'local-synthetic-generator'
+    || (typeof weatherModel === 'string' && weatherModel.startsWith('synthetic-'));
+}
+
 const errorMessages = new Map([
   ['request_timeout', 'requestTimeout'],
   ['connection_error', 'connectionError'],
@@ -30,6 +47,7 @@ const eventActions = new Map([
   ['train_or_load_model', 'eventModel'],
   ['check_for_updates', 'eventCheckUpdates'],
   ['quality_gate', 'eventQualityGate'],
+  ['use_baseline', 'eventBaseline'],
   ['analyze_result', 'eventAnalyze'],
   ['persist_run', 'eventPersist'],
   ['continue', 'eventContinue'],
@@ -81,13 +99,6 @@ export function metricStatusLabel(status, locale) {
         ? 'statusUnverifiedWeather'
         : 'evaluationUnavailable';
   return text(locale, key);
-}
-
-export function apiModeLabel(mode, offline, locale) {
-  const key = mode === 'competition' ? 'competitionMode' : mode === 'demo' ? 'demoMode' : null;
-  if (!key) return text(locale, 'unavailable');
-  const label = text(locale, key);
-  return offline ? `${label} · ${text(locale, 'offlineMode')}` : label;
 }
 
 export function formatPercentage(value, locale) {

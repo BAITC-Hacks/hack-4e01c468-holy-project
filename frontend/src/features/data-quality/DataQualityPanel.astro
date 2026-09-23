@@ -1,5 +1,5 @@
 ---
-import { Badge, Card, Icon, Skeleton } from '@santi020k/lumen-astro';
+import { Badge, Card, Skeleton } from '@santi020k/lumen-astro';
 import SectionHeader from '../../components/SectionHeader.astro';
 import { text } from '../../lib/preferences.mjs';
 
@@ -24,6 +24,5 @@ const t = (key: Parameters<typeof text>[1]) => text('ru', key);
     <div data-quality-content>
       <dl class="quality-list" aria-label={t('qualityDetails')} data-i18n-aria="qualityDetails"><div><dt data-i18n="weatherModel">{t('weatherModel')}</dt><dd><Skeleton aria-label={t('loadingWeatherSource')} /></dd></div></dl>
     </div>
-    <p class="evidence-footnote"><Icon name="shield-check" size="sm" /> <span data-i18n="competitionGateNote">{t('competitionGateNote')}</span></p>
   </Card>
 </section>
