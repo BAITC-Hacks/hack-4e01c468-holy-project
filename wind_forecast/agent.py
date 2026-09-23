@@ -753,6 +753,78 @@ class ForecastAgent:
         persist_event["outcome"] = "success"
         return result
 
+    @staticmethod
+    def _prediction_quality(diagnostics: dict[str, Any]) -> dict[str, Any]:
+        gate = diagnostics.get("quality_gate")
+        gate = gate if isinstance(gate, dict) else {}
+        policy = diagnostics.get("quantile_crossing_policy")
+        return {
+            "model": {
+                "quantile_crossing_correction_count": max(
+                    0, int(diagnostics.get("quantile_crossing_correction_count", 0) or 0)
+                ),
+                "quantile_clipping_count": max(
+                    0, int(diagnostics.get("quantile_clipping_count", 0) or 0)
+                ),
+                "quantile_crossing_policy": (
+                    policy if policy == "sort_per_row_then_clip" else None
+                ),
+            },
+            "quality_gate": {
+                "quantile_correction_count": max(
+                    0, int(gate.get("quantile_correction_count", 0) or 0)
+                ),
+                "clipping_count": max(0, int(gate.get("clipping_count", 0) or 0)),
+            },
+        }
+
+    @staticmethod
+    def _calibration_audit(diagnostics: dict[str, Any]) -> dict[str, Any]:
+        calibration = diagnostics.get("calibration")
+        if isinstance(calibration, dict) and calibration:
+            return _jsonable(calibration)
+
+        fields = {
+            "status": diagnostics.get("calibration_status"),
+            "cutoff": diagnostics.get("calibration_cutoff"),
+            "sample_count": diagnostics.get("calibration_n"),
+            "used_for_intervals": diagnostics.get("calibration_used_for_intervals"),
+            "uncertainty_method": diagnostics.get("uncertainty_method"),
+        }
+        audit = {key: value for key, value in fields.items() if value is not None}
+        return _jsonable(audit)
+
+    @staticmethod
+    def _degrade_reasons(
+        status: str,
+        prediction: Prediction | None,
+        snapshot: WeatherSnapshot | None,
+    ) -> list[str]:
+        if status != "degraded":
+            return []
+
+        reasons: list[str] = []
+        if prediction is not None:
+            diagnostics = prediction.diagnostics or {}
+            quality = ForecastAgent._prediction_quality(diagnostics)
+            model_quality = quality["model"]
+            gate_quality = quality["quality_gate"]
+            if model_quality["quantile_crossing_correction_count"]:
+                reasons.append("model_quantile_crossings_corrected")
+            if model_quality["quantile_clipping_count"]:
+                reasons.append("model_quantiles_clipped")
+            if gate_quality["quantile_correction_count"]:
+                reasons.append("quality_gate_quantile_crossings_corrected")
+            if gate_quality["clipping_count"]:
+                reasons.append("quality_gate_quantiles_clipped")
+            if "baseline" in prediction.model_name.lower():
+                reasons.append("baseline_model_selected")
+            if bool(diagnostics.get("degraded", False)):
+                reasons.append("predictor_marked_degraded")
+        if snapshot is not None and snapshot.provenance.get("provenance_status") != "verified":
+            reasons.append("weather_provenance_unverified")
+        return reasons
+
     def _manifest(
         self,
         request: RunRequest,
@@ -827,8 +899,10 @@ class ForecastAgent:
                 "history_rows": len(history),
                 "latest_available_at": self._latest_available_at(history),
                 "run_reason": self._safe_reason(reason),
+                "prediction_quality": self._prediction_quality(diagnostics),
+                "degrade_reasons": self._degrade_reasons(status, prediction, snapshot),
             },
-            "calibration": _jsonable(diagnostics.get("calibration", {})),
+            "calibration": self._calibration_audit(diagnostics),
             "files": {},
         }
 
@@ -852,6 +926,17 @@ class ForecastAgent:
     ) -> str:
         provenance = snapshot.provenance.get("provenance_status", "unavailable") if snapshot else "unavailable"
         model = prediction.model_name if prediction is not None else "no prediction produced"
+        diagnostics = prediction.diagnostics if prediction is not None else {}
+        quality = ForecastAgent._prediction_quality(diagnostics)
+        model_quality = quality["model"]
+        gate_quality = quality["quality_gate"]
+        degrade_reasons = ForecastAgent._degrade_reasons(status, prediction, snapshot)
+        calibration = ForecastAgent._calibration_audit(diagnostics)
+        reason_text = ", ".join(degrade_reasons) if degrade_reasons else "none"
+        calibration_status = calibration.get("status", "unavailable")
+        calibration_samples = calibration.get("sample_count", "unavailable")
+        calibration_cutoff = calibration.get("cutoff", "unavailable")
+        used_for_intervals = calibration.get("used_for_intervals", "unknown")
         return (
             f"# Forecast run report\n\n"
             f"- Status: `{status}`\n"
@@ -862,6 +947,16 @@ class ForecastAgent:
             f"- Weather provenance: `{provenance}`\n"
             f"- Competition valid: `{request.mode == 'competition' and provenance == 'verified' and status != 'failed'}`\n"
             f"- Agent outcome: `{ForecastAgent._safe_reason(reason)}`\n"
+            f"\n## Prediction quality\n\n"
+            f"- Degrade reasons: `{reason_text}`\n"
+            f"- Model quantile crossings corrected: `{model_quality['quantile_crossing_correction_count']}`\n"
+            f"- Model quantiles clipped: `{model_quality['quantile_clipping_count']}`\n"
+            f"- Quality gate crossings corrected: `{gate_quality['quantile_correction_count']}`\n"
+            f"- Quality gate quantiles clipped: `{gate_quality['clipping_count']}`\n"
+            f"\n## Calibration audit\n\n"
+            f"- Calibration audit: `{calibration_status}`, `{calibration_samples}` samples\n"
+            f"- Calibration cutoff: `{calibration_cutoff}`\n"
+            f"- Applied to intervals: `{used_for_intervals}`\n"
         )
 
     @staticmethod

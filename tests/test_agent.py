@@ -287,6 +287,62 @@ def test_model_quantile_corrections_force_degraded_status(diagnostic: str) -> No
     assert ForecastAgent._success_status(prediction, snapshot) == "degraded"
 
 
+def test_persisted_run_explains_prediction_corrections_and_residual_audit() -> None:
+    request = _request()
+    calls: list[str] = []
+    snapshot = make_synthetic_weather_snapshot(request)
+    prediction = _prediction(request)
+    prediction.diagnostics.update(
+        {
+            "quantile_crossing_correction_count": 15,
+            "quantile_crossing_policy": "sort_per_row_then_clip",
+            "quantile_clipping_count": 0,
+            "calibration_status": "calibrated",
+            "calibration_cutoff": "2026-01-29T19:00:00Z",
+            "calibration_n": 288,
+            "calibration_used_for_intervals": False,
+            "uncertainty_method": "catboost_quantiles",
+        }
+    )
+    store = _Store(calls)
+    agent = ForecastAgent(
+        _Provider(snapshot, calls),
+        lambda history, weather, req: (calls.append("predict") or prediction),
+        _Analyzer(calls, [Decision("finalize", "validated forecast")]),
+        store,
+    )
+
+    result = agent.run(request, pd.DataFrame({"power": [0.5]}))
+
+    persisted = store.persisted[0]
+    manifest = persisted["manifest"]
+    assert result.status == "degraded"
+    assert manifest["status"] == "degraded"
+    assert manifest["data_quality"]["prediction_quality"] == {
+        "model": {
+            "quantile_crossing_correction_count": 15,
+            "quantile_clipping_count": 0,
+            "quantile_crossing_policy": "sort_per_row_then_clip",
+        },
+        "quality_gate": {"quantile_correction_count": 0, "clipping_count": 0},
+    }
+    assert manifest["data_quality"]["degrade_reasons"] == [
+        "model_quantile_crossings_corrected",
+        "weather_provenance_unverified",
+    ]
+    assert manifest["calibration"] == {
+        "status": "calibrated",
+        "cutoff": "2026-01-29T19:00:00Z",
+        "sample_count": 288,
+        "used_for_intervals": False,
+        "uncertainty_method": "catboost_quantiles",
+    }
+    assert "Model quantile crossings corrected: `15`" in persisted["report"]
+    assert "Quality gate crossings corrected: `0`" in persisted["report"]
+    assert "Calibration audit: `calibrated`, `288` samples" in persisted["report"]
+    assert "Applied to intervals: `False`" in persisted["report"]
+
+
 @pytest.mark.parametrize("bad_value", [float("nan"), float("inf"), float("-inf")])
 def test_quality_gate_rejects_nonfinite_quantiles_before_clipping(bad_value: float) -> None:
     request = _request()
