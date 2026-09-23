@@ -1,0 +1,42 @@
+:root {
+  color-scheme: light;
+  --canvas: 42 30% 98%;
+  --surface: 0 0% 100%;
+  --surface-muted: 190 24% 95%;
+  --surface-strong: 190 18% 89%;
+  --line: 194 16% 84%;
+  --ink: 200 34% 13%;
+  --ink-soft: 199 17% 34%;
+  --ink-muted: 199 11% 48%;
+  --brand: 170 57% 29%;
+  --brand-solid: 170 57% 25%;
+  --brand-soft: 166 44% 92%;
+  --on-brand: 0 0% 100%;
+  --accent: 197 65% 42%;
+  --success: 151 52% 34%;
+  --warning: 35 82% 44%;
+  --danger: 0 66% 48%;
+  --on-danger: 0 0% 100%;
+  --chart-series-1: hsl(var(--accent));
+  --chart-series-2: hsl(var(--brand));
+  --font-display: "Avenir Next", "Segoe UI", sans-serif;
+  --font-body: "Inter", "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+}
+
+.app-rail[data-theme="dark"] {
+  color-scheme: dark;
+  --canvas: 201 38% 11%;
+  --surface: 200 31% 15%;
+  --surface-muted: 199 28% 18%;
+  --surface-strong: 198 25% 22%;
+  --line: 198 20% 26%;
+  --ink: 183 26% 92%;
+  --ink-soft: 184 15% 72%;
+  --ink-muted: 184 13% 57%;
+  --brand: 164 62% 58%;
+  --brand-solid: 164 62% 48%;
+  --brand-soft: 164 33% 20%;
+  --on-brand: 201 38% 11%;
+  --accent: 194 75% 64%;
+}

@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import importlib.metadata
 import json
-import marshal
 import os
 import tempfile
 from dataclasses import dataclass
@@ -17,20 +16,19 @@ import numpy as np
 import pandas as pd
 
 from wind_forecast.agent import ForecastAgent
-from wind_forecast.artifacts import ArtifactStore
+from wind_forecast.application.code_identity import code_fingerprint
+from wind_forecast.bootstrap import build_runtime
 from wind_forecast.config import Settings
 from wind_forecast.contracts import (
-    Decision,
     Prediction,
     RunRequest,
     RunResult,
     WeatherSnapshot,
     parse_request,
 )
-from wind_forecast.data import DataPipeline, validate_hourly_history
+from wind_forecast.data import validate_hourly_history
 from wind_forecast.evaluation import rolling_backtest
 from wind_forecast.features import FEATURE_COLUMNS, FeaturePipeline, training_rows
-from wind_forecast.llm import OpenAIAnalyzer
 from wind_forecast.models import (
     DEFAULT_MODEL_PARAMETERS,
     BaselineModel,
@@ -38,12 +36,7 @@ from wind_forecast.models import (
     fit_residual_calibration,
     _metadata_path,
 )
-from wind_forecast.weather import (
-    WeatherProvider,
-    make_synthetic_weather_snapshot,
-    validate_weather,
-    weather_fingerprint,
-)
+from wind_forecast.weather import validate_weather, weather_fingerprint
 
 UTC = timezone.utc
 ALMATY = timezone(timedelta(hours=5))
@@ -83,72 +76,6 @@ def _timestamp_values(frame: pd.DataFrame) -> list[dict[str, Any]]:
                 row[key] = value
         records.append(row)
     return records
-
-
-class _SyntheticWeatherProvider:
-    """Explicit deterministic provider for offline demo runs."""
-
-    def fetch(self, request: RunRequest, refresh: bool = False) -> WeatherSnapshot:
-        del refresh
-        return make_synthetic_weather_snapshot(request)
-
-
-class _FixtureWeatherProvider:
-    """Read one recorded weather fixture without changing its valid times."""
-
-    def __init__(self, path: Path) -> None:
-        self.path = Path(path).expanduser().resolve()
-        try:
-            self.payload = json.loads(self.path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise ValueError("weather fixture could not be read as JSON") from exc
-        if self.payload.get("mode") != "demo" or not isinstance(self.payload.get("rows"), list):
-            raise ValueError("weather fixture must contain demo rows")
-
-    def fetch(self, request: RunRequest, refresh: bool = False) -> WeatherSnapshot:
-        del refresh
-        frame = pd.DataFrame.from_records(self.payload["rows"])
-        for column in ("valid_time", "initialized_at", "issued_at", "available_at"):
-            if column in frame:
-                frame[column] = pd.to_datetime(frame[column], utc=True, errors="coerce")
-        expected_start = pd.Timestamp(request.origin).tz_convert("UTC")
-        if frame.empty or frame["valid_time"].min() != expected_start:
-            raise ValueError("weather fixture origin does not match the requested origin")
-        last_time = expected_start + pd.Timedelta(hours=request.horizon - 1)
-        if frame["valid_time"].max() < last_time:
-            raise ValueError("weather fixture does not cover the requested horizon")
-        frame = frame.loc[frame["valid_time"] <= last_time].copy()
-        frame["lead_hours"] = (
-            (frame["valid_time"] - expected_start).dt.total_seconds() / 3600
-        ).astype("int64")
-        provenance = dict(self.payload.get("provenance") or {})
-        fingerprint = weather_fingerprint(frame, provenance)
-        return WeatherSnapshot(
-            rows=frame,
-            raw_responses=[],
-            fingerprint=fingerprint,
-            provenance=provenance,
-        )
-
-
-class _DeterministicAnalyzer:
-    """Select only safe agent actions and never makes an external request."""
-
-    def __call__(self, diagnostics: dict[str, Any], allowed: set[str]) -> Decision:
-        if (
-            "use_cached_weather" in allowed
-            and diagnostics.get("cached_weather_available") is True
-        ):
-            return Decision(
-                "use_cached_weather", "deterministic_fallback:validated_cached_weather"
-            )
-        if "use_baseline" in allowed and diagnostics.get("baseline_available") is True:
-            return Decision("use_baseline", "deterministic_fallback:model_unavailable")
-        if "finalize" in allowed:
-            return Decision("finalize", "deterministic_fallback:validated_forecast")
-        if "continue" in allowed:
-            return Decision("continue", "deterministic_fallback:continue_validated_run")
-        return Decision("abort", "deterministic_fallback:no_safe_action")
 
 
 @dataclass(frozen=True)
@@ -237,25 +164,19 @@ class Application:
         self.settings = settings
         self.offline = bool(offline)
         self.weather_fixture = Path(weather_fixture).expanduser().resolve() if weather_fixture else None
-        if self.offline and self.weather_fixture is not None:
-            raise ValueError("--offline and --weather-fixture cannot be used together")
-        if weather_provider is not None:
-            self.weather_provider = weather_provider
-        elif self.offline:
-            self.weather_provider = _SyntheticWeatherProvider()
-        elif self.weather_fixture is not None:
-            self.weather_provider = _FixtureWeatherProvider(self.weather_fixture)
-        else:
-            self.weather_provider = WeatherProvider(settings.cache_dir)
-        self.analyzer = analyzer or (
-            _DeterministicAnalyzer()
-            if self.offline or not settings.openai_api_key
-            else OpenAIAnalyzer(settings)
+        runtime = build_runtime(
+            settings,
+            offline=self.offline,
+            weather_fixture=self.weather_fixture,
+            weather_provider=weather_provider,
+            analyzer=analyzer,
         )
+        self.weather_provider = runtime.weather_provider
+        self.analyzer = runtime.analyzer
         self.model_parameters = {**DEFAULT_MODEL_PARAMETERS, **dict(model_parameters or {})}
-        self.data_pipeline = DataPipeline()
-        self.feature_pipeline = FeaturePipeline()
-        self.store = ArtifactStore(settings.run_dir)
+        self.data_pipeline = runtime.data_pipeline
+        self.feature_pipeline = runtime.feature_pipeline
+        self.store = runtime.store
         self._source: _PreparedSource | None = None
         self._history: pd.DataFrame | None = None
         self._snapshot_identity = self._weather_identity()
@@ -501,7 +422,7 @@ class Application:
             "predict": ForecastModel.predict,
         }
         return {
-            name: hashlib.sha256(marshal.dumps(function.__code__)).hexdigest()
+            name: code_fingerprint(function.__code__)
             for name, function in functions.items()
             if getattr(function, "__code__", None) is not None
         }

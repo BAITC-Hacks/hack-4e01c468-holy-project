@@ -1,0 +1,32 @@
+---
+import { Card, Icon, Table } from '@santi020k/lumen-astro';
+import SectionHeader from '../../components/SectionHeader.astro';
+---
+
+<section id="forecast" class="section-block supporting-section" aria-labelledby="forecast-rows-title">
+  <SectionHeader
+    kicker="FORECAST DATA"
+    title="Hourly forecast rows"
+    id="forecast-rows-title"
+    description="Exact p10, p50, and p90 values returned by the selected run. Values are normalized output fractions, shown as percentages."
+  />
+  <Card class="data-card" as="section" aria-label="Forecast records">
+    <div class="data-card-head">
+      <div><span class="eyebrow">RECORDS</span><p class="record-count" data-record-count>Loading rows</p></div>
+      <a class="download-link download-link--standalone" data-table-csv-link hidden>
+        <Icon name="download" size="sm" /> Download CSV
+      </a>
+    </div>
+    <div class="table-scroll" tabindex="0" aria-label="Scrollable forecast records table">
+      <Table class="forecast-table">
+        <caption>Forecast records for the selected run. Power quantiles are normalized output, not megawatts.</caption>
+        <thead>
+          <tr><th scope="col">Valid time (UTC)</th><th scope="col">Turbine</th><th scope="col">Lead</th><th scope="col">P10</th><th scope="col">P50</th><th scope="col">P90</th></tr>
+        </thead>
+        <tbody data-forecast-rows>
+          <tr><td colspan="6"><span class="table-loading">Loading forecast records…</span></td></tr>
+        </tbody>
+      </Table>
+    </div>
+  </Card>
+</section>

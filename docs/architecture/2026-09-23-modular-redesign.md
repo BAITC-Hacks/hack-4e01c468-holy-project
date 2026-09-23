@@ -1,6 +1,6 @@
 # Incremental modular redesign
 
-**Status:** architecture audit and migration proposal; no product code moved.
+**Status:** batch 1 (composition root and first ports) completed; batches 2–7 remain proposed and unstarted.
 **Scope:** preserve the current Python, CLI, Streamlit and artifact behavior while
 making the shared application logic easier to test and change. This follows the
 repository architecture skill: modular monolith, inward dependencies, meaningful
@@ -217,6 +217,13 @@ output when the refactor starts rather than freezing an assumed number. Add
 boundary tests for application/ML/infrastructure imports and keep the full
 suite as the release gate. The test must catch an inward-dependency violation,
 not assert source text or private filenames.
+
+Application predictor code identity now uses the same recursive, source-location
+independent code fingerprint as the staged agent. Existing run records made with
+the prior raw-marshaled service code hash intentionally miss reuse once and are
+recomputed on the next refresh. Keep those immutable run artifacts, model files,
+and weather caches; do not force reuse from an unrecognized legacy identity.
+This migration does not promise raw-hash compatibility across Python versions.
 
 Required compatibility checks include the CLI commands and options, constructor
 injection and offline fallback, 24/48-hour two-turbine grid, UTC/+05:00 rules,

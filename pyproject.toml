@@ -15,11 +15,13 @@ dependencies = [
     "python-dotenv",
     "requests",
     "streamlit",
+    "fastapi",
+    "uvicorn",
 ]
 
 [project.optional-dependencies]
 ml = ["catboost"]
-dev = ["pytest", "playwright"]
+dev = ["pytest", "playwright", "httpx"]
 
 [tool.setuptools.packages.find]
 include = ["wind_forecast*"]

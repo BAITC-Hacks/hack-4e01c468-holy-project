@@ -1,0 +1,13 @@
+---
+import { Stat } from '@santi020k/lumen-astro';
+
+interface Props {
+  label: string;
+  value: string;
+  name: string;
+}
+
+const { label, value, name } = Astro.props;
+---
+
+<Stat class="metric-card" data-stat={name} label={label} value={value} />

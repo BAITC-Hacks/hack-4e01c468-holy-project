@@ -1,0 +1,51 @@
+---
+import { Badge, Icon, Sidebar } from '@santi020k/lumen-astro';
+---
+
+<a class="skip-link" href="#main-content">Skip to content</a>
+<div class="workspace-shell">
+  <Sidebar class="app-rail" variant="unstyled" aria-label="Workspace navigation" data-theme="dark">
+    <a class="brand" href="#overview" aria-label="Windline forecast workspace">
+      <span class="brand-mark"><Icon name="wind" size="lg" /></span>
+      <span class="brand-copy">WINDLINE<small>FORECAST WORKSPACE</small></span>
+    </a>
+    <p class="rail-caption">MONITOR</p>
+    <nav class="section-nav" aria-label="Dashboard sections">
+      <a class="nav-link" href="#overview" aria-current="location">
+        <Icon name="chart-no-axes-combined" size="sm" /><span>Overview</span>
+      </a>
+      <a class="nav-link" href="#forecast">
+        <Icon name="table-2" size="sm" /><span>Forecast rows</span>
+      </a>
+      <a class="nav-link" href="#backtest">
+        <Icon name="history" size="sm" /><span>Backtest</span>
+      </a>
+      <a class="nav-link" href="#agent-trace">
+        <Icon name="list-checks" size="sm" /><span>Agent trace</span>
+      </a>
+      <a class="nav-link" href="#data-quality">
+        <Icon name="shield-check" size="sm" /><span>Data quality</span>
+      </a>
+    </nav>
+    <div class="rail-foot">
+      <span class="connection-dot" data-connection-dot></span>
+      <div><strong>Local API</strong><span data-api-status aria-live="polite">Connecting</span></div>
+    </div>
+  </Sidebar>
+
+  <div class="workspace-main">
+    <header class="topbar">
+      <div class="topbar-context">
+        <span class="context-mark"><Icon name="wind" size="sm" /></span>
+        <span>WIND POWER <span class="context-slash">/</span> OPERATIONS</span>
+      </div>
+      <div class="topbar-status">
+        <Badge class="mode-badge" variant="outline" data-mode-badge>Checking mode</Badge>
+        <span class="topbar-run"><span>Selected run</span><code data-run-id>—</code></span>
+      </div>
+    </header>
+    <main id="main-content" class="page-content">
+      <slot />
+    </main>
+  </div>
+</div>

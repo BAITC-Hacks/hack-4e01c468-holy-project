@@ -1,0 +1,115 @@
+---
+import { Alert, Button, Card, Chart, Field, Icon, Input, NativeSelect, Skeleton } from '@santi020k/lumen-astro';
+import MetricCard from '../../components/MetricCard.astro';
+import SectionHeader from '../../components/SectionHeader.astro';
+import StatusBadge from '../../components/StatusBadge.astro';
+---
+
+<section id="overview" class="section-block overview-section" aria-labelledby="overview-title">
+  <header class="overview-heading">
+    <div>
+      <p class="section-kicker">WIND POWER / HOURLY OPERATIONS</p>
+      <h1 id="overview-title">Forecast workspace</h1>
+      <p class="section-description">Inspect the latest two-turbine forecast, its uncertainty range, and the evidence behind it.</p>
+    </div>
+    <div class="heading-outcome">
+      <span class="eyebrow">CURRENT RUN</span>
+      <StatusBadge label="Loading latest" outcome="unknown" />
+    </div>
+  </header>
+
+  <Alert class="run-alert" variant="warning" data-run-alert data-outcome="info" hidden aria-live="polite">
+    <div class="run-alert-content">
+      <Icon name="info" size="sm" />
+      <p data-run-alert-text>Reading the latest saved forecast.</p>
+      <button class="text-button" type="button" data-latest-retry hidden>Retry latest</button>
+    </div>
+  </Alert>
+
+  <div class="metric-strip" aria-label="Selected forecast facts">
+    <MetricCard name="horizon" label="Forecast horizon" value="—" />
+    <MetricCard name="weather" label="Weather source" value="—" />
+    <MetricCard name="evaluation" label="Evaluation" value="—" />
+  </div>
+
+  <div class="forecast-grid">
+    <Card class="chart-card" as="section" aria-labelledby="chart-heading">
+      <div class="chart-context">
+        <SectionHeader
+          kicker="POWER FORECAST"
+          title="Hourly output range"
+          id="chart-heading"
+          description="Normalized turbine output; the solid line is p50 and the shaded envelope spans p10–p90."
+        />
+        <div class="chart-context-detail">
+          <StatusBadge label="Awaiting run" outcome="unknown" />
+          <span data-chart-window>—</span>
+        </div>
+      </div>
+      <Chart class="forecast-chart" presentation="bare" aria-label="Hourly turbine forecast chart">
+        <div class="chart-host" data-forecast-chart>
+          <Skeleton class="chart-skeleton" aria-label="Loading forecast chart" />
+        </div>
+      </Chart>
+      <div class="chart-legend-note">
+        <span><i class="legend-band" aria-hidden="true"></i>p10–p90 range</span>
+        <span><i class="legend-median" aria-hidden="true"></i>p50 median</span>
+        <span class="legend-hint">Both turbine series use the returned forecast rows.</span>
+      </div>
+    </Card>
+
+    <div class="forecast-aside">
+      <Card class="controls-card" as="section" aria-labelledby="new-forecast-title">
+        <div class="control-heading">
+          <span class="control-icon"><Icon name="sliders-horizontal" size="sm" /></span>
+          <div><p class="section-kicker">NEW FORECAST</p><h2 id="new-forecast-title">Choose a window</h2></div>
+        </div>
+        <p class="control-intro">Set an hourly origin in your local time. The API receives the equivalent UTC timestamp.</p>
+        <form id="forecast-form" class="forecast-form">
+          <Field class="forecast-field">
+            <label for="origin">Forecast origin</label>
+            <Input id="origin" name="origin" type="datetime-local" step="3600" required />
+            <small>Hourly boundary · <span data-timezone>local timezone</span></small>
+          </Field>
+          <Field class="forecast-field">
+            <label for="horizon">Forecast horizon</label>
+            <NativeSelect
+              id="horizon"
+              name="horizon"
+              value="24"
+              options={[
+                { label: '24 hours', value: '24' },
+                { label: '48 hours', value: '48' },
+              ]}
+            />
+          </Field>
+          <div class="form-actions">
+            <Button class="action-button" type="submit" name="intent" value="forecast">
+              <Icon name="play" size="sm" /> Generate forecast
+            </Button>
+            <Button class="action-button" type="submit" name="intent" value="refresh" variant="outline">
+              <Icon name="refresh-cw" size="sm" /> Run fresh forecast
+            </Button>
+          </div>
+          <p class="form-status" data-job-feedback role="status" aria-live="polite"></p>
+          <div class="job-recovery" data-job-recovery hidden>
+            <Button class="action-button" type="button" variant="secondary" data-job-retry>Check status</Button>
+          </div>
+        </form>
+      </Card>
+
+      <Card class="run-context" as="section" aria-labelledby="selected-run-heading">
+        <div class="context-heading">
+          <span class="eyebrow">SELECTED RUN</span>
+          <StatusBadge label="—" outcome="unknown" />
+        </div>
+        <h2 id="selected-run-heading" class="run-id" data-selected-run>Waiting for the API</h2>
+        <div class="context-row"><span>Origin</span><strong data-run-origin>—</strong></div>
+        <div class="context-row"><span>Reuse</span><strong data-run-reuse>—</strong></div>
+        <a class="download-link" data-csv-link hidden>
+          <Icon name="download" size="sm" /> Download selected forecast CSV
+        </a>
+      </Card>
+    </div>
+  </div>
+</section>

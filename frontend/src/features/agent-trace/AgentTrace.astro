@@ -1,0 +1,23 @@
+---
+import { Card, Empty, Icon, Skeleton } from '@santi020k/lumen-astro';
+import SectionHeader from '../../components/SectionHeader.astro';
+---
+
+<section id="agent-trace" class="section-block supporting-section" aria-labelledby="agent-trace-title">
+  <SectionHeader
+    kicker="RUN DECISIONS"
+    title="Agent trace"
+    id="agent-trace-title"
+    description="Ordered actions and outcomes recorded during the selected run. Explanations are rendered as plain text."
+  />
+  <Card class="data-card trace-card" as="section" aria-label="Selected run agent event trace">
+    <div class="trace-summary"><span class="trace-mark"><Icon name="list-checks" size="sm" /></span><span data-trace-summary>Loading event trace…</span></div>
+    <div data-agent-events>
+      <ol class="event-list" aria-label="Agent run events" data-event-list><li><Skeleton aria-label="Loading agent events" /></li></ol>
+      <Empty class="inline-empty" variant="compact" data-event-empty hidden>
+        <h3>No event trace</h3>
+        <p>The selected run did not include agent events.</p>
+      </Empty>
+    </div>
+  </Card>
+</section>

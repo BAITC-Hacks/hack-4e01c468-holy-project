@@ -1,0 +1,23 @@
+---
+import { Badge, Card, Empty, Icon, Skeleton } from '@santi020k/lumen-astro';
+import SectionHeader from '../../components/SectionHeader.astro';
+---
+
+<section id="data-quality" class="section-block supporting-section" aria-labelledby="data-quality-title">
+  <SectionHeader
+    kicker="PROVENANCE & INPUTS"
+    title="Data quality"
+    id="data-quality-title"
+    description="Source, observation age, and point-in-time eligibility come from the selected run manifest and forecast rows."
+  />
+  <Card class="data-card quality-card" as="section" aria-label="Forecast data quality and weather provenance">
+    <div class="data-card-head">
+      <div><span class="eyebrow">POINT-IN-TIME CHECK</span><p class="record-count" data-provenance-summary>Loading provenance</p></div>
+      <Badge variant="outline" data-provenance-badge>Awaiting run</Badge>
+    </div>
+    <div data-quality-content>
+      <dl class="quality-list" aria-label="Data quality details"><div><dt>Weather model</dt><dd><Skeleton aria-label="Loading weather source" /></dd></div></dl>
+    </div>
+    <p class="evidence-footnote"><Icon name="shield-check" size="sm" /> Competition eligibility is determined by backend provenance validation.</p>
+  </Card>
+</section>

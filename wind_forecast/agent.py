@@ -6,17 +6,16 @@ import hashlib
 import importlib.metadata
 import json
 import math
-import marshal
 import numbers
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from types import CodeType
 from typing import Any, Callable, Protocol
 
 import numpy as np
 import pandas as pd
 
+from wind_forecast.application.code_identity import _code_fingerprint, _code_identity
 from wind_forecast.contracts import Decision, Prediction, RunRequest, RunResult, WeatherSnapshot
 from wind_forecast.weather import validate_weather, weather_fingerprint
 
@@ -137,38 +136,6 @@ def _canonical_hash(value: Any) -> str:
         _jsonable(value), ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
-
-
-def _code_identity(code: CodeType) -> tuple[Any, ...]:
-    """Return stable code metadata without runtime-adapted bytecode state."""
-    def stable_constant(value: Any) -> Any:
-        if isinstance(value, CodeType):
-            return _code_identity(value)
-        if isinstance(value, tuple):
-            return tuple(stable_constant(item) for item in value)
-        if isinstance(value, frozenset):
-            return tuple(sorted((stable_constant(item) for item in value), key=repr))
-        return value
-
-    return (
-        code.co_argcount,
-        code.co_posonlyargcount,
-        code.co_kwonlyargcount,
-        code.co_nlocals,
-        code.co_stacksize,
-        code.co_flags,
-        code.co_code,
-        tuple(stable_constant(value) for value in code.co_consts),
-        code.co_names,
-        code.co_varnames,
-        code.co_freevars,
-        code.co_cellvars,
-        code.co_exceptiontable,
-    )
-
-
-def _code_fingerprint(code: CodeType) -> str:
-    return hashlib.sha256(marshal.dumps(_code_identity(code))).hexdigest()
 
 
 def _frame_fingerprint(frame: pd.DataFrame) -> str:

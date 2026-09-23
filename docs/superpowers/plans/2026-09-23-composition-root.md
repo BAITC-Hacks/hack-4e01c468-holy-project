@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Preserve Application constructor/method signatures, CLI commands, dashboard behavior, schemas and point-in-time rules.
-- Keep source/model/weather identities and serialized artifacts unchanged; no new training or weather request during construction.
+- Keep source/model/weather identities and serialized artifacts unchanged; no new training or weather request during construction. Review ruling: legacy position-sensitive implementation-code fingerprints may invalidate once when replaced by stable semantic fingerprints; never force reuse across unknown old code. Subsequent line-only moves must not invalidate runs. Existing artifacts remain immutable.
 - Do not migrate to src/, introduce an API, change the UI runtime, or execute architecture batches 2–7.
 - Do not edit service.py until integration-fix owner releases it; inspect its final handoff first.
 - No commits, branches, destructive operations, dependency installs or edits to user reference files.

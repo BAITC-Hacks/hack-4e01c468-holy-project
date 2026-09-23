@@ -1,0 +1,537 @@
+diff --git a/wind_forecast/service.py b/wind_forecast/service.py
+index 39deeef..150c554 100644
+--- a/wind_forecast/service.py
++++ b/wind_forecast/service.py
+@@ -17,20 +17,18 @@ import numpy as np
+ import pandas as pd
+ 
+ from wind_forecast.agent import ForecastAgent
+-from wind_forecast.artifacts import ArtifactStore
++from wind_forecast.bootstrap import build_runtime
+ from wind_forecast.config import Settings
+ from wind_forecast.contracts import (
+-    Decision,
+     Prediction,
+     RunRequest,
+     RunResult,
+     WeatherSnapshot,
+     parse_request,
+ )
+-from wind_forecast.data import DataPipeline, validate_hourly_history
++from wind_forecast.data import validate_hourly_history
+ from wind_forecast.evaluation import rolling_backtest
+ from wind_forecast.features import FEATURE_COLUMNS, FeaturePipeline, training_rows
+-from wind_forecast.llm import OpenAIAnalyzer
+ from wind_forecast.models import (
+     DEFAULT_MODEL_PARAMETERS,
+     BaselineModel,
+@@ -38,12 +36,7 @@ from wind_forecast.models import (
+     fit_residual_calibration,
+     _metadata_path,
+ )
+-from wind_forecast.weather import (
+-    WeatherProvider,
+-    make_synthetic_weather_snapshot,
+-    validate_weather,
+-    weather_fingerprint,
+-)
++from wind_forecast.weather import validate_weather, weather_fingerprint
+ 
+ UTC = timezone.utc
+ ALMATY = timezone(timedelta(hours=5))
+@@ -85,72 +78,6 @@ def _timestamp_values(frame: pd.DataFrame) -> list[dict[str, Any]]:
+     return records
+ 
+ 
+-class _SyntheticWeatherProvider:
+-    """Explicit deterministic provider for offline demo runs."""
+-
+-    def fetch(self, request: RunRequest, refresh: bool = False) -> WeatherSnapshot:
+-        del refresh
+-        return make_synthetic_weather_snapshot(request)
+-
+-
+-class _FixtureWeatherProvider:
+-    """Read one recorded weather fixture without changing its valid times."""
+-
+-    def __init__(self, path: Path) -> None:
+-        self.path = Path(path).expanduser().resolve()
+-        try:
+-            self.payload = json.loads(self.path.read_text(encoding="utf-8"))
+-        except (OSError, json.JSONDecodeError) as exc:
+-            raise ValueError("weather fixture could not be read as JSON") from exc
+-        if self.payload.get("mode") != "demo" or not isinstance(self.payload.get("rows"), list):
+-            raise ValueError("weather fixture must contain demo rows")
+-
+-    def fetch(self, request: RunRequest, refresh: bool = False) -> WeatherSnapshot:
+-        del refresh
+-        frame = pd.DataFrame.from_records(self.payload["rows"])
+-        for column in ("valid_time", "initialized_at", "issued_at", "available_at"):
+-            if column in frame:
+-                frame[column] = pd.to_datetime(frame[column], utc=True, errors="coerce")
+-        expected_start = pd.Timestamp(request.origin).tz_convert("UTC")
+-        if frame.empty or frame["valid_time"].min() != expected_start:
+-            raise ValueError("weather fixture origin does not match the requested origin")
+-        last_time = expected_start + pd.Timedelta(hours=request.horizon - 1)
+-        if frame["valid_time"].max() < last_time:
+-            raise ValueError("weather fixture does not cover the requested horizon")
+-        frame = frame.loc[frame["valid_time"] <= last_time].copy()
+-        frame["lead_hours"] = (
+-            (frame["valid_time"] - expected_start).dt.total_seconds() / 3600
+-        ).astype("int64")
+-        provenance = dict(self.payload.get("provenance") or {})
+-        fingerprint = weather_fingerprint(frame, provenance)
+-        return WeatherSnapshot(
+-            rows=frame,
+-            raw_responses=[],
+-            fingerprint=fingerprint,
+-            provenance=provenance,
+-        )
+-
+-
+-class _DeterministicAnalyzer:
+-    """Select only safe agent actions and never makes an external request."""
+-
+-    def __call__(self, diagnostics: dict[str, Any], allowed: set[str]) -> Decision:
+-        if (
+-            "use_cached_weather" in allowed
+-            and diagnostics.get("cached_weather_available") is True
+-        ):
+-            return Decision(
+-                "use_cached_weather", "deterministic_fallback:validated_cached_weather"
+-            )
+-        if "use_baseline" in allowed and diagnostics.get("baseline_available") is True:
+-            return Decision("use_baseline", "deterministic_fallback:model_unavailable")
+-        if "finalize" in allowed:
+-            return Decision("finalize", "deterministic_fallback:validated_forecast")
+-        if "continue" in allowed:
+-            return Decision("continue", "deterministic_fallback:continue_validated_run")
+-        return Decision("abort", "deterministic_fallback:no_safe_action")
+-
+-
+ @dataclass(frozen=True)
+ class _PreparedSource:
+     paths: dict[str, Path]
+@@ -237,25 +164,19 @@ class Application:
+         self.settings = settings
+         self.offline = bool(offline)
+         self.weather_fixture = Path(weather_fixture).expanduser().resolve() if weather_fixture else None
+-        if self.offline and self.weather_fixture is not None:
+-            raise ValueError("--offline and --weather-fixture cannot be used together")
+-        if weather_provider is not None:
+-            self.weather_provider = weather_provider
+-        elif self.offline:
+-            self.weather_provider = _SyntheticWeatherProvider()
+-        elif self.weather_fixture is not None:
+-            self.weather_provider = _FixtureWeatherProvider(self.weather_fixture)
+-        else:
+-            self.weather_provider = WeatherProvider(settings.cache_dir)
+-        self.analyzer = analyzer or (
+-            _DeterministicAnalyzer()
+-            if self.offline or not settings.openai_api_key
+-            else OpenAIAnalyzer(settings)
++        runtime = build_runtime(
++            settings,
++            offline=self.offline,
++            weather_fixture=self.weather_fixture,
++            weather_provider=weather_provider,
++            analyzer=analyzer,
+         )
++        self.weather_provider = runtime.weather_provider
++        self.analyzer = runtime.analyzer
+         self.model_parameters = {**DEFAULT_MODEL_PARAMETERS, **dict(model_parameters or {})}
+-        self.data_pipeline = DataPipeline()
+-        self.feature_pipeline = FeaturePipeline()
+-        self.store = ArtifactStore(settings.run_dir)
++        self.data_pipeline = runtime.data_pipeline
++        self.feature_pipeline = runtime.feature_pipeline
++        self.store = runtime.store
+         self._source: _PreparedSource | None = None
+         self._history: pd.DataFrame | None = None
+         self._snapshot_identity = self._weather_identity()
+
+diff --git a/wind_forecast/bootstrap.py b/wind_forecast/bootstrap.py
+new file mode 100644
+index 0000000..c5d4554
+--- /dev/null
++++ b/wind_forecast/bootstrap.py
+@@ -0,0 +1,70 @@
++"""Construct the concrete runtime graph used by the application facade."""
++
++from dataclasses import dataclass
++from pathlib import Path
++
++from wind_forecast.application.forecasting.fallback_policy import DeterministicAnalyzer
++from wind_forecast.application.ports import DiagnosticAnalyzer, WeatherSource
++from wind_forecast.artifacts import ArtifactStore
++from wind_forecast.config import Settings
++from wind_forecast.data import DataPipeline
++from wind_forecast.features import FeaturePipeline
++from wind_forecast.infrastructure.weather.demo import (
++    FixtureWeatherProvider,
++    SyntheticWeatherProvider,
++)
++from wind_forecast.llm import OpenAIAnalyzer
++from wind_forecast.weather import WeatherProvider
++
++
++@dataclass(frozen=True)
++class RuntimeComponents:
++    """Fresh adapters and pipelines for one Application instance."""
++
++    weather_provider: WeatherSource
++    analyzer: DiagnosticAnalyzer
++    data_pipeline: DataPipeline
++    feature_pipeline: FeaturePipeline
++    store: ArtifactStore
++
++
++def build_runtime(
++    settings: Settings,
++    *,
++    offline: bool = False,
++    weather_fixture: Path | None = None,
++    weather_provider: WeatherSource | None = None,
++    analyzer: DiagnosticAnalyzer | None = None,
++) -> RuntimeComponents:
++    """Select runtime adapters and create fresh stateful pipelines and storage."""
++    fixture_path = (
++        Path(weather_fixture).expanduser().resolve()
++        if weather_fixture is not None
++        else None
++    )
++    if offline and fixture_path is not None:
++        raise ValueError("--offline and --weather-fixture cannot be used together")
++
++    if weather_provider is not None:
++        selected_weather = weather_provider
++    elif offline:
++        selected_weather = SyntheticWeatherProvider()
++    elif fixture_path is not None:
++        selected_weather = FixtureWeatherProvider(fixture_path)
++    else:
++        selected_weather = WeatherProvider(settings.cache_dir)
++
++    if analyzer is not None:
++        selected_analyzer = analyzer
++    elif offline or not settings.openai_api_key:
++        selected_analyzer = DeterministicAnalyzer()
++    else:
++        selected_analyzer = OpenAIAnalyzer(settings)
++
++    return RuntimeComponents(
++        weather_provider=selected_weather,
++        analyzer=selected_analyzer,
++        data_pipeline=DataPipeline(),
++        feature_pipeline=FeaturePipeline(),
++        store=ArtifactStore(settings.run_dir),
++    )
+
+diff --git a/wind_forecast/application/ports.py b/wind_forecast/application/ports.py
+new file mode 100644
+index 0000000..ff394d9
+--- /dev/null
++++ b/wind_forecast/application/ports.py
+@@ -0,0 +1,17 @@
++"""Small replaceable contracts consumed by application runtime wiring."""
++
++from typing import Any, Protocol
++
++from wind_forecast.contracts import Decision, RunRequest, WeatherSnapshot
++
++
++class WeatherSource(Protocol):
++    """Fetch one weather snapshot for a forecast request."""
++
++    def fetch(self, request: RunRequest, refresh: bool = False) -> WeatherSnapshot: ...
++
++
++class DiagnosticAnalyzer(Protocol):
++    """Choose an allowed workflow decision from computed diagnostics."""
++
++    def __call__(self, diagnostics: dict[str, Any], allowed: set[str]) -> Decision: ...
+
+diff --git a/wind_forecast/application/forecasting/fallback_policy.py b/wind_forecast/application/forecasting/fallback_policy.py
+new file mode 100644
+index 0000000..5b76719
+--- /dev/null
++++ b/wind_forecast/application/forecasting/fallback_policy.py
+@@ -0,0 +1,25 @@
++"""Deterministic decisions used when no external advisor is configured."""
++
++from typing import Any
++
++from wind_forecast.contracts import Decision
++
++
++class DeterministicAnalyzer:
++    """Select only safe agent actions and never make an external request."""
++
++    def __call__(self, diagnostics: dict[str, Any], allowed: set[str]) -> Decision:
++        if (
++            "use_cached_weather" in allowed
++            and diagnostics.get("cached_weather_available") is True
++        ):
++            return Decision(
++                "use_cached_weather", "deterministic_fallback:validated_cached_weather"
++            )
++        if "use_baseline" in allowed and diagnostics.get("baseline_available") is True:
++            return Decision("use_baseline", "deterministic_fallback:model_unavailable")
++        if "finalize" in allowed:
++            return Decision("finalize", "deterministic_fallback:validated_forecast")
++        if "continue" in allowed:
++            return Decision("continue", "deterministic_fallback:continue_validated_run")
++        return Decision("abort", "deterministic_fallback:no_safe_action")
+
+diff --git a/wind_forecast/infrastructure/weather/demo.py b/wind_forecast/infrastructure/weather/demo.py
+new file mode 100644
+index 0000000..4914f34
+--- /dev/null
++++ b/wind_forecast/infrastructure/weather/demo.py
+@@ -0,0 +1,60 @@
++"""Synthetic and fixed-fixture weather sources for demo runs."""
++
++import json
++from pathlib import Path
++from typing import Any
++
++import pandas as pd
++
++from wind_forecast.contracts import RunRequest, WeatherSnapshot
++from wind_forecast.weather import make_synthetic_weather_snapshot, weather_fingerprint
++
++
++class SyntheticWeatherProvider:
++    """Explicit deterministic provider for offline demo runs."""
++
++    def fetch(self, request: RunRequest, refresh: bool = False) -> WeatherSnapshot:
++        del refresh
++        return make_synthetic_weather_snapshot(request)
++
++
++class FixtureWeatherProvider:
++    """Read one recorded weather fixture without changing its valid times."""
++
++    def __init__(self, path: Path) -> None:
++        self.path = Path(path).expanduser().resolve()
++        try:
++            self.payload: dict[str, Any] = json.loads(
++                self.path.read_text(encoding="utf-8")
++            )
++        except (OSError, json.JSONDecodeError) as exc:
++            raise ValueError("weather fixture could not be read as JSON") from exc
++        if self.payload.get("mode") != "demo" or not isinstance(
++            self.payload.get("rows"), list
++        ):
++            raise ValueError("weather fixture must contain demo rows")
++
++    def fetch(self, request: RunRequest, refresh: bool = False) -> WeatherSnapshot:
++        del refresh
++        frame = pd.DataFrame.from_records(self.payload["rows"])
++        for column in ("valid_time", "initialized_at", "issued_at", "available_at"):
++            if column in frame:
++                frame[column] = pd.to_datetime(frame[column], utc=True, errors="coerce")
++        expected_start = pd.Timestamp(request.origin).tz_convert("UTC")
++        if frame.empty or frame["valid_time"].min() != expected_start:
++            raise ValueError("weather fixture origin does not match the requested origin")
++        last_time = expected_start + pd.Timedelta(hours=request.horizon - 1)
++        if frame["valid_time"].max() < last_time:
++            raise ValueError("weather fixture does not cover the requested horizon")
++        frame = frame.loc[frame["valid_time"] <= last_time].copy()
++        frame["lead_hours"] = (
++            (frame["valid_time"] - expected_start).dt.total_seconds() / 3600
++        ).astype("int64")
++        provenance = dict(self.payload.get("provenance") or {})
++        fingerprint = weather_fingerprint(frame, provenance)
++        return WeatherSnapshot(
++            rows=frame,
++            raw_responses=[],
++            fingerprint=fingerprint,
++            provenance=provenance,
++        )
+
+diff --git a/tests/test_bootstrap.py b/tests/test_bootstrap.py
+new file mode 100644
+index 0000000..b55f7fb
+--- /dev/null
++++ b/tests/test_bootstrap.py
+@@ -0,0 +1,178 @@
++from __future__ import annotations
++
++import ast
++import inspect
++import subprocess
++import sys
++from pathlib import Path
++
++import pytest
++
++from wind_forecast.config import Settings
++
++
++def _settings(root, *, api_key: str = "") -> Settings:
++    return Settings(
++        root_dir=root,
++        data_dir=root / "data",
++        cache_dir=root / "cache",
++        model_dir=root / "models",
++        run_dir=root / "runs",
++        fixture_dir=root / "fixtures",
++        openai_api_key=api_key,
++        mode="demo",
++    )
++
++
++def test_build_runtime_keeps_explicit_weather_and_analyzer(tmp_path):
++    from wind_forecast.bootstrap import build_runtime
++
++    weather = object()
++    analyzer = object()
++
++    runtime = build_runtime(
++        _settings(tmp_path), weather_provider=weather, analyzer=analyzer
++    )
++
++    assert runtime.weather_provider is weather
++    assert runtime.analyzer is analyzer
++
++
++def test_offline_runtime_fetches_synthetic_demo_weather_without_openai(
++    tmp_path, monkeypatch
++):
++    import wind_forecast.bootstrap as wiring
++    from wind_forecast.contracts import parse_request
++
++    def forbidden_openai(*args, **kwargs):
++        raise AssertionError("offline runtime constructed OpenAI")
++
++    monkeypatch.setattr(wiring, "OpenAIAnalyzer", forbidden_openai)
++    runtime = wiring.build_runtime(
++        _settings(tmp_path, api_key="test-sentinel"), offline=True
++    )
++
++    snapshot = runtime.weather_provider.fetch(
++        parse_request("2026-02-01T00:00:00+05:00", 48, "demo")
++    )
++
++    assert len(snapshot.rows) == 96
++    assert snapshot.provenance["competition_valid"] is False
++    assert runtime.analyzer({}, {"continue"}).action == "continue"
++
++
++def test_offline_and_fixed_fixture_sources_cannot_be_combined(tmp_path):
++    from wind_forecast.bootstrap import build_runtime
++
++    with pytest.raises(ValueError, match="cannot be used together"):
++        build_runtime(
++            _settings(tmp_path), offline=True, weather_fixture=tmp_path / "fixture.json"
++        )
++
++
++def test_malformed_weather_fixture_is_rejected_during_composition(tmp_path):
++    from wind_forecast.bootstrap import build_runtime
++
++    fixture = tmp_path / "broken.json"
++    fixture.write_text("{broken", encoding="utf-8")
++
++    with pytest.raises(ValueError, match="fixture"):
++        build_runtime(_settings(tmp_path), weather_fixture=fixture)
++
++
++def test_fixed_fixture_keeps_utc_valid_times_and_requested_leads(tmp_path):
++    from wind_forecast.bootstrap import build_runtime
++    from wind_forecast.contracts import parse_request
++
++    fixture = Path(__file__).parent / "fixtures/weather/synthetic_48h.json"
++    runtime = build_runtime(_settings(tmp_path), weather_fixture=fixture)
++    snapshot = runtime.weather_provider.fetch(
++        parse_request("2026-02-01T00:00:00+05:00", 24, "demo")
++    )
++    times = snapshot.rows["valid_time"]
++
++    assert times.min().isoformat() == "2026-01-31T19:00:00+00:00"
++    assert times.max().isoformat() == "2026-02-01T18:00:00+00:00"
++    assert set(snapshot.rows["lead_hours"]) == set(range(24))
++    assert len(snapshot.rows) == 48
++
++
++def test_each_runtime_owns_fresh_pipelines_and_store(tmp_path):
++    from wind_forecast.bootstrap import build_runtime
++
++    settings = _settings(tmp_path)
++    first = build_runtime(settings, offline=True)
++    second = build_runtime(settings, offline=True)
++
++    assert first.data_pipeline is not second.data_pipeline
++    assert first.feature_pipeline is not second.feature_pipeline
++    assert first.store is not second.store
++    assert first.store.root == (tmp_path / "runs").resolve()
++
++
++def test_application_facade_keeps_injections_and_runs_offline_fixture(tmp_path):
++    from tests.test_e2e import _settings as e2e_settings
++    from wind_forecast.contracts import parse_request
++    from wind_forecast.service import Application
++
++    weather = object()
++    analyzer = object()
++    injected = Application(
++        _settings(tmp_path / "injected"),
++        weather_provider=weather,
++        analyzer=analyzer,
++    )
++    assert injected.weather_provider is weather
++    assert injected.analyzer is analyzer
++
++    app = Application(
++        e2e_settings(tmp_path / "offline"),
++        offline=True,
++        model_parameters={"iterations": 2},
++    )
++    result = app.run(parse_request("2026-02-01T00:00:00+05:00", 24, "demo"))
++    saved = app.read_run(result.run_id)
++
++    assert len(saved["forecast"]) == 48
++    assert saved["manifest"]["competition_valid"] is False
++
++
++@pytest.mark.parametrize(
++    "modules",
++    [
++        ("wind_forecast.bootstrap", "wind_forecast.service"),
++        ("wind_forecast.service", "wind_forecast.bootstrap"),
++    ],
++)
++def test_bootstrap_and_service_import_in_either_order(modules):
++    code = "\n".join(f"import {module}" for module in modules)
++    result = subprocess.run(
++        [sys.executable, "-c", code], capture_output=True, text=True
++    )
++
++    assert result.returncode == 0, result.stderr
++
++
++def test_ports_do_not_import_outward_adapters_or_clients():
++    import wind_forecast.application.ports as ports
++
++    tree = ast.parse(inspect.getsource(ports))
++    imported = []
++    for node in ast.walk(tree):
++        if isinstance(node, ast.Import):
++            imported.extend(alias.name for alias in node.names)
++        elif isinstance(node, ast.ImportFrom):
++            imported.append(node.module or "")
++    forbidden = (
++        "wind_forecast.infrastructure",
++        "wind_forecast.bootstrap",
++        "wind_forecast.service",
++        "requests",
++        "openai",
++    )
++
++    assert not any(
++        name == prefix or name.startswith(prefix + ".")
++        for name in imported
++        for prefix in forbidden
++    )
+

@@ -1,0 +1,30 @@
+---
+import DashboardLayout from '../layouts/DashboardLayout.astro';
+import Overview from '../features/forecast/Overview.astro';
+import ForecastTable from '../features/forecast/ForecastTable.astro';
+import BacktestPanel from '../features/backtest/BacktestPanel.astro';
+import AgentTrace from '../features/agent-trace/AgentTrace.astro';
+import DataQualityPanel from '../features/data-quality/DataQualityPanel.astro';
+---
+
+<DashboardLayout
+  title="Windline · Forecast workspace"
+  description="Inspect hourly turbine forecasts, evaluation evidence, agent decisions, and data provenance."
+>
+  <div class="dashboard-content">
+    <Overview />
+    <ForecastTable />
+    <BacktestPanel />
+    <AgentTrace />
+    <DataQualityPanel />
+    <footer class="page-footer">
+      <span>WINDLINE <i aria-hidden="true">/</i> LOCAL FORECAST DESK</span>
+      <span>Forecast rows, evaluation, and provenance are supplied by the local API.</span>
+    </footer>
+  </div>
+  <script>
+    import { startDashboard } from '../lib/dashboard';
+
+    startDashboard();
+  </script>
+</DashboardLayout>

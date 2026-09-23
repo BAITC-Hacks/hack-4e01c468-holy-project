@@ -1,0 +1,33 @@
+---
+import { Badge, Card, Empty, Icon, Table } from '@santi020k/lumen-astro';
+import SectionHeader from '../../components/SectionHeader.astro';
+---
+
+<section id="backtest" class="section-block supporting-section" aria-labelledby="backtest-title">
+  <SectionHeader
+    kicker="HISTORICAL EVIDENCE"
+    title="Backtest"
+    id="backtest-title"
+    description="Evaluation metrics are read from the selected run. Accuracy is shown only when matching turbine observations are available."
+  />
+  <Card class="data-card evidence-card" as="section" aria-label="Historical backtest evidence">
+    <div class="data-card-head">
+      <div><span class="eyebrow">EVALUATION STATUS</span><p class="record-count" data-evaluation-period>Checking evaluation window</p></div>
+      <Badge variant="outline" data-backtest-badge>Awaiting run</Badge>
+    </div>
+    <div data-backtest-content>
+      <Empty class="inline-empty" variant="compact" data-backtest-empty>
+        <h3>Evaluation not loaded</h3>
+        <p>Historical metrics will appear here when the selected run includes labeled observations.</p>
+      </Empty>
+      <div class="metrics-table-scroll" data-backtest-table-wrap hidden>
+        <Table class="metrics-table">
+          <caption>Historical forecast evaluation metrics in normalized output units.</caption>
+          <thead><tr><th scope="col">Model</th><th scope="col">Scope</th><th scope="col">MAE</th><th scope="col">RMSE</th><th scope="col">Interval coverage</th><th scope="col">Rows</th></tr></thead>
+          <tbody data-backtest-rows></tbody>
+        </Table>
+      </div>
+    </div>
+    <p class="evidence-footnote"><Icon name="info" size="sm" /> February turbine truth is unavailable; no February accuracy is inferred.</p>
+  </Card>
+</section>

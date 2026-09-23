@@ -1,0 +1,18 @@
+---
+import { Badge } from '@santi020k/lumen-astro';
+
+interface Props {
+  label: string;
+  outcome: 'success' | 'degraded' | 'failed' | 'unknown';
+}
+
+const { label, outcome } = Astro.props;
+const variants = {
+  success: 'success',
+  degraded: 'warning',
+  failed: 'destructive',
+  unknown: 'outline',
+} as const;
+---
+
+<Badge class="run-status" variant={variants[outcome]} data-outcome={outcome}>{label}</Badge>

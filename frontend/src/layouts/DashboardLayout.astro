@@ -1,0 +1,30 @@
+---
+import { UIPrimitives } from '@santi020k/lumen-astro';
+import '@santi020k/lumen-astro/styles.css';
+import '../styles/global.css';
+import AppShell from '../components/AppShell.astro';
+
+interface Props {
+  title: string;
+  description: string;
+}
+
+const { title, description } = Astro.props;
+---
+
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="hsl(201 38% 11%)" />
+    <meta name="description" content={description} />
+    <title>{title}</title>
+  </head>
+  <body>
+    <UIPrimitives />
+    <AppShell>
+      <slot />
+    </AppShell>
+  </body>
+</html>

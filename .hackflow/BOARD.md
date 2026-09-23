@@ -11,8 +11,8 @@ role report with progress and blockers.
 | P0 | T4 features, T5 models/backtest | ml | done | ML fix reviewed;66 combined module tests;actual default demo train completed |
 | P0 | T6 agent/LLM/artifacts | agent | done | Integrity+reuseaudit fixes reviewed;root34focusedtests;immutable artifacts and complete invocation trace |
 | P0 | T7 service/CLI | integration | active | T2–T6 interfaces ready; CLI/e2e |
-| P0 | T8 custom dashboard | ui-lumen | done | Browser width fix reviewed;22 tests;Chromium1920/1440/768/390 geometry/navigation/validation passed |
+| P0 | T8 real Astro/Lumen frontend | lumen-frontend-discovery | active | User rejected Streamlit styling;plugin verified;Astro+API approach approved;written spec awaiting approval |
 | P0 | T9 acceptance/docs | orchestrator | blocked | T1–T8; full suite and demo |
-| P0 | T10 incremental architecture redesign | architecture | active | User skills/architecture.md;dependency audit + migration design;no conflicting product edits |
+| P0 | T10 incremental architecture redesign | architecture-batch1 | active | Actual coding terminal46659;bootstrap+ports approved batch1;service constructor ownership released by integration-fix |
 
 Allowed statuses: `ready`, `active`, `blocked`, `review`, `done`.
