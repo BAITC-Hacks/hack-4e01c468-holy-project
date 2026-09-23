@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-
 import pandas as pd
 import plotly.graph_objects as go
 
@@ -13,12 +11,6 @@ _TURBINE_STYLE = {
     "turbine_1": {"label": "Turbine 1", "color": "#087F73", "fill": "rgba(8,127,115,0.13)"},
     "turbine_2": {"label": "Turbine 2", "color": "#2563EB", "fill": "rgba(37,99,235,0.12)"},
 }
-
-
-def _values(frame: pd.DataFrame, column: str) -> list[float]:
-    """Return finite, bounded power values for display."""
-    values = pd.to_numeric(frame[column], errors="coerce")
-    return values.where(values.between(0, 1)).tolist()
 
 
 def build_forecast_chart(forecast: pd.DataFrame) -> go.Figure:
@@ -143,7 +135,7 @@ def build_site_map() -> go.Figure:
             y=latitudes,
             mode="markers+text",
             text=["Turbine 1", "Turbine 2"],
-            textposition=["top left", "bottom right"],
+            textposition=["top right", "bottom left"],
             marker={"size": 15, "color": ["#087F73", "#2563EB"], "line": {"width": 3, "color": "#FFFFFF"}},
             customdata=[[43.645150, 78.535604], [43.643198, 78.538828]],
             hovertemplate="%{text}<br>%{customdata[0]:.6f}° N, %{customdata[1]:.6f}° E<extra></extra>",

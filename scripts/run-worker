@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+role="${1:?Usage: bash scripts/run-worker ROLE}"
+if [[ ! "$role" =~ ^[a-z][a-z0-9_-]*$ ]]; then
+  printf 'Invalid role\n' >&2
+  exit 2
+fi
+prompt=".hackflow/prompts/$role.md"
+[[ -s "$prompt" ]] || { printf 'Missing role prompt\n' >&2; exit 2; }
+mkdir -p .hackflow/logs
+exec codex exec -m gpt-6-luna -c 'model_reasoning_effort="xhigh"' \
+  -s workspace-write --ephemeral \
+  "Read $prompt and execute only your assigned task. Applicable testing skill is /home/mephirious/.codex/plugins/cache/openai-curated-remote/superpowers/6.4.1/skills/test-driven-development/SKILL.md and its writing-good-tests.md reference; verification skill is in sibling verification-before-completion/SKILL.md. Read relevant local frontend/backend skills too. No commits, no subagents. Write your report and finish." \
+  > ".hackflow/logs/$role.log" 2>&1

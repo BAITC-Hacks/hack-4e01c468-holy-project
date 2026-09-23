@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wind-forecast"
+version = "0.1.0"
+description = "Reproducible wind turbine forecasting agent"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy",
+    "openai",
+    "pandas",
+    "plotly",
+    "python-dotenv",
+    "requests",
+    "streamlit",
+]
+
+[project.optional-dependencies]
+ml = ["catboost"]
+dev = ["pytest", "playwright"]
+
+[tool.setuptools.packages.find]
+include = ["wind_forecast*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["live: tests that contact external services"]

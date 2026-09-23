@@ -1,0 +1,55 @@
+---
+import { Sidebar, Card, Stat, Alert, Badge, Button, Field, Label, Input, NativeSelect, LineChart } from '@santi020k/lumen-astro';
+import '@santi020k/lumen-astro/styles.css';
+import '../styles/dashboard.css';
+
+const dates = ['01 фев 00:00', '01 фев 06:00', '01 фев 12:00', '01 фев 18:00', '02 фев 00:00', '02 фев 06:00', '02 фев 12:00', '02 фев 18:00'];
+const series = [
+  { id: 't1', label: 'Турбина 01', data: dates.map((x, i) => ({ x, y: [18, 21, 25, 24, 29, 34, 32, 37][i] })) },
+  { id: 't2', label: 'Турбина 02', data: dates.map((x, i) => ({ x, y: [15, 17, 20, 19, 23, 27, 26, 30][i] })) }
+];
+---
+<!doctype html>
+<html lang="ru" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#102a32" />
+  <title>Windline — Центр прогнозирования</title>
+  <meta name="description" content="Демонстрационный интерфейс прогнозирования выработки ветряной электростанции" />
+</head>
+<body>
+  <div class="app-shell">
+    <Sidebar class="side-nav" aria-label="Основная навигация">
+      <a class="brand" href="#overview" aria-label="Windline, обзор"><span class="brand-symbol">✳</span><span>WINDLINE<span class="brand-period">.</span><small>FORECAST DESK · ALMATY</small></span></a>
+      <p class="nav-caption">РАБОЧЕЕ ПРОСТРАНСТВО</p>
+      <nav aria-label="Разделы"><a class="nav-link active" href="#overview" aria-current="page"><span class="nav-icon">◫</span> Обзор</a><a class="nav-link" href="#forecast"><span class="nav-icon">⌁</span> Прогноз</a><a class="nav-link" href="#backtest"><span class="nav-icon">▥</span> Бэктест</a><a class="nav-link" href="#provenance"><span class="nav-icon">◇</span> Источники данных</a></nav>
+      <div class="side-bottom"><span class="site-dot"></span><div><strong>ВЭС Алматы</strong><small>2 турбины · Казахстан</small></div></div>
+    </Sidebar>
+    <main id="overview" class="main-content">
+      <header class="topbar"><div class="breadcrumbs">Объекты <span>/</span> ВЭС Алматы <span>/</span> <strong>Обзор</strong></div><div class="top-right"><span class="demo-pill">ДЕМО ДАННЫЕ</span><span class="top-avatar" aria-label="Рабочее пространство Windline">W</span></div></header>
+      <div class="content">
+        <section class="heading"><div><div class="eyebrow"><span class="eyebrow-line"></span> WIND POWER / OPERATIONS</div><h1>Обзор прогноза</h1><p>Мониторинг ожидаемой выработки ветропарка в Алматы.</p></div><div class="heading-state"><Badge variant="warning">● Требует проверки</Badge><small>Запуск от 01 фев 2026, 00:00 UTC+5</small></div></section>
+        <Alert variant="warning" class="status-alert"><div class="alert-inner"><div class="alert-symbol">!</div><div><strong>Прогноз сформирован с ограничениями</strong><p>Проверьте модель и происхождение погодных данных, прежде чем использовать результаты для принятия решений.</p></div><a href="#provenance">Проверить данные <span aria-hidden="true">↗</span></a></div></Alert>
+        <section class="metrics" aria-label="Ключевые показатели"><Stat label="Горизонт прогноза" value="48 часов" /><Stat label="Шаг расчёта" value="1 час" /><Stat label="Бэктест" value="Нет данных" /><Stat label="Наблюдение" value="Нет данных" /></section>
+        <section class="workspace" aria-label="Прогноз и настройки"><div class="primary-column">
+          <Card as="section" class="forecast-card" id="forecast"><div class="section-heading"><div><div class="eyebrow">ПРОГНОЗ ВЫРАБОТКИ</div><h2>Почасовая мощность</h2><p>Нормализованная активная мощность, % от номинала</p></div><Badge variant="secondary">2 турбины</Badge></div>
+            <LineChart aria-label="Иллюстративная почасовая мощность двух турбин" series={series} formatValue={(v) => `${v}%`} markers="all" showTable={true} showLegend={true} caption="Иллюстративные данные интерфейса. В подключённом приложении здесь отображаются реальные результаты модели." class="power-chart" />
+            <div class="chart-note"><span class="note-icon">i</span><span>Фактическая серия и доверительные интервалы должны поступать из API прогноза.</span></div>
+          </Card>
+          <Card as="section" id="backtest" class="backtest-card"><div class="section-heading"><div><div class="eyebrow">КАЧЕСТВО МОДЕЛИ</div><h2>Бэктест</h2></div><Badge variant="outline">Недоступен</Badge></div><div class="empty-state"><div class="empty-icon">▥</div><div><strong>Пока нечего сравнивать</strong><p>Для февраля нет размеченных фактических данных по турбинам. Метрики появятся после загрузки наблюдений.</p></div></div></Card>
+        </div><div class="secondary-column">
+          <Card as="section" class="form-card"><div class="eyebrow">НОВЫЙ РАСЧЁТ</div><h2>Создать прогноз</h2><p class="form-intro">Выберите точку отсчёта и длительность.</p><form id="forecast-form"><Field><Label for="origin">Начало прогноза</Label><Input id="origin" name="origin" type="datetime-local" value="2026-02-01T00:00" required /></Field><Field><Label for="horizon">Горизонт</Label><NativeSelect id="horizon" name="horizon" options={[{label:'24 часа',value:'24'},{label:'48 часов',value:'48'},{label:'72 часа',value:'72'}]} value="48" /></Field><Button type="submit" class="full-button">Запустить прогноз <span aria-hidden="true">↗</span></Button></form><div class="form-divider"></div><Button id="refresh-weather" variant="outline" class="full-button">Обновить погодные данные</Button><p id="action-feedback" class="feedback" role="status" aria-live="polite"></p></Card>
+          <Card as="section" id="provenance" class="source-card"><div class="section-heading"><div><div class="eyebrow">ПРОИСХОЖДЕНИЕ ДАННЫХ</div><h2>Погода и объект</h2></div></div><div class="source-row"><span>Погодная модель</span><strong>hindcast</strong></div><div class="source-row"><span>Проверка по времени</span><Badge variant="warning">Не подтверждена</Badge></div><div class="source-row"><span>Расположение</span><strong>Алматы, KZ</strong></div><div class="turbines"><div class="turbine"><span class="turbine-dot green"></span><div><strong>Турбина 01</strong><small>43.645150° N · 78.535604° E</small></div></div><div class="turbine"><span class="turbine-dot blue"></span><div><strong>Турбина 02</strong><small>43.643198° N · 78.538828° E</small></div></div></div></Card>
+        </div></section><footer>WINDLINE / FORECAST DESK <span>Демонстрационный интерфейс · данные и действия не подключены к сервису</span></footer>
+      </div>
+    </main>
+  </div>
+  <script>
+    const form = document.querySelector<HTMLFormElement>('#forecast-form');
+    const feedback = document.querySelector<HTMLElement>('#action-feedback');
+    form?.addEventListener('submit', (event) => { event.preventDefault(); if (!form.reportValidity()) return; if (feedback) feedback.textContent = 'Демо: параметры выбраны. Подключите API, чтобы запустить расчёт.'; });
+    document.querySelector('#refresh-weather')?.addEventListener('click', () => { if (feedback) feedback.textContent = 'Демо: подключите источник погодных данных для обновления.'; });
+  </script>
+</body>
+</html>

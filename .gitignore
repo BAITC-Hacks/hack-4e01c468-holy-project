@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+api_keys.txt
+.venv/
+__pycache__/
+.pytest_cache/
+.cache/
+artifacts/
+*.egg-info/
+.hackflow/logs/

@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)"
+FLOW_DIR="$PROJECT_ROOT/.hackflow"
+MODEL="${HACKFLOW_MODEL:-gpt-6-luna}"
+REASONING="${HACKFLOW_REASONING:-xhigh}"
+
+usage() {
+  printf '%s\n' \
+    'Usage: scripts/hackflow <command>' \
+    '' \
+    'Commands:' \
+    '  doctor   Verify Codex, terminal, model, prompts, and repository state' \
+    '  start [roles...]  Open selected worker roles (default: product builder qa)' \
+    '  status   Show the board, worker reports, and current git changes' \
+    '' \
+    'Optional environment variables:' \
+    '  HACKFLOW_MODEL       Codex model slug (default: gpt-6-luna)' \
+    '  HACKFLOW_REASONING   Reasoning effort (default: xhigh)'
+}
+
+available_models() {
+  codex debug models 2>/dev/null | jq -r '.models[].slug' 2>/dev/null
+}
+
+doctor() {
+  local failed=0
+
+  command -v codex >/dev/null || { printf 'FAIL  codex is not installed\n'; failed=1; }
+  command -v gnome-terminal >/dev/null || { printf 'FAIL  gnome-terminal is not installed\n'; failed=1; }
+  command -v jq >/dev/null || { printf 'FAIL  jq is not installed\n'; failed=1; }
+  git -C "$PROJECT_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
+    printf 'FAIL  %s is not a git worktree\n' "$PROJECT_ROOT"
+    failed=1
+  }
+
+  local prompt
+  for prompt in product builder qa; do
+    if [[ ! -s "$FLOW_DIR/prompts/$prompt.md" ]]; then
+      printf 'FAIL  missing prompt: %s\n' "$FLOW_DIR/prompts/$prompt.md"
+      failed=1
+    fi
+  done
+
+  if command -v codex >/dev/null && command -v jq >/dev/null; then
+    if available_models | grep -Fxq "$MODEL"; then
+      printf 'OK    model %s is available\n' "$MODEL"
+    else
+      printf 'FAIL  model %s is not in the local Codex catalog\n' "$MODEL"
+      failed=1
+    fi
+  fi
+
+  if [[ "$REASONING" != "xhigh" ]]; then
+    printf 'NOTE  reasoning override is %s (the intended default is xhigh)\n' "$REASONING"
+  else
+    printf 'OK    reasoning effort is xhigh\n'
+  fi
+
+  if [[ $failed -ne 0 ]]; then
+    return 1
+  fi
+  printf 'OK    hackflow is ready in %s\n' "$PROJECT_ROOT"
+}
+
+start_worker() {
+  local role="$1"
+  local prompt_file="$FLOW_DIR/prompts/$role.md"
+  local title="hackflow:$role"
+  local command_text
+
+  printf -v command_text \
+    'cd %q && codex --no-alt-screen -C %q -m %q -c %q -s workspace-write -a on-request %q; exec bash' \
+    "$PROJECT_ROOT" \
+    "$PROJECT_ROOT" \
+    "$MODEL" \
+    "model_reasoning_effort=\"$REASONING\"" \
+    "$(<"$prompt_file")"
+
+  gnome-terminal --tab --title="$title" -- bash -lc "$command_text"
+}
+
+start() {
+  doctor
+  mkdir -p "$FLOW_DIR/reports"
+  if [[ $# -eq 0 ]]; then set -- product builder qa; fi
+  local role
+  for role in "$@"; do
+    if [[ ! "$role" =~ ^[a-z][a-z0-9_-]*$ || ! -s "$FLOW_DIR/prompts/$role.md" ]]; then
+      printf 'Invalid or missing role: %s\n' "$role" >&2
+      return 2
+    fi
+  done
+  for role in "$@"; do
+    start_worker "$role"
+    printf 'Started %s: %s / %s\n' "$role" "$MODEL" "$REASONING"
+  done
+}
+
+status() {
+  printf '%s\n' '=== BOARD ==='
+  sed -n '1,240p' "$FLOW_DIR/BOARD.md"
+
+  local report
+  for report in product builder qa; do
+    printf '\n=== %s REPORT ===\n' "${report^^}"
+    if [[ -s "$FLOW_DIR/reports/$report.md" ]]; then
+      sed -n '1,240p' "$FLOW_DIR/reports/$report.md"
+    else
+      printf 'No report yet.\n'
+    fi
+  done
+
+  printf '%s\n' '' '=== GIT STATUS ==='
+  git -C "$PROJECT_ROOT" status --short
+}
+
+case "${1:-}" in
+  doctor) doctor ;;
+  start) shift; start "$@" ;;
+  status) status ;;
+  -h|--help|help|'') usage ;;
+  *)
+    printf 'Unknown command: %s\n\n' "$1" >&2
+    usage >&2
+    exit 2
+    ;;
+esac
