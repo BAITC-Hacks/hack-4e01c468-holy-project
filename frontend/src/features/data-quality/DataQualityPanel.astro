@@ -1,23 +1,29 @@
 ---
 import { Badge, Card, Empty, Icon, Skeleton } from '@santi020k/lumen-astro';
 import SectionHeader from '../../components/SectionHeader.astro';
+import { text } from '../../lib/preferences.mjs';
+
+const t = (key: string) => text('ru', key);
 ---
 
 <section id="data-quality" class="section-block supporting-section" aria-labelledby="data-quality-title">
   <SectionHeader
-    kicker="PROVENANCE & INPUTS"
-    title="Data quality"
+    kicker={t('provenanceInputs')}
+    kickerKey="provenanceInputs"
+    title={t('qualityTitle')}
+    titleKey="qualityTitle"
     id="data-quality-title"
-    description="Source, observation age, and point-in-time eligibility come from the selected run manifest and forecast rows."
+    description={t('qualityDescription')}
+    descriptionKey="qualityDescription"
   />
-  <Card class="data-card quality-card" as="section" aria-label="Forecast data quality and weather provenance">
+  <Card class="data-card quality-card" as="section" aria-label={t('qualityAria')} data-i18n-aria="qualityAria">
     <div class="data-card-head">
-      <div><span class="eyebrow">POINT-IN-TIME CHECK</span><p class="record-count" data-provenance-summary>Loading provenance</p></div>
-      <Badge variant="outline" data-provenance-badge>Awaiting run</Badge>
+      <div><span class="eyebrow" data-i18n="pointInTimeCheck">{t('pointInTimeCheck')}</span><p class="record-count" data-provenance-summary>{t('loadingProvenance')}</p></div>
+      <Badge variant="outline" data-provenance-badge>{t('awaitingRun')}</Badge>
     </div>
     <div data-quality-content>
-      <dl class="quality-list" aria-label="Data quality details"><div><dt>Weather model</dt><dd><Skeleton aria-label="Loading weather source" /></dd></div></dl>
+      <dl class="quality-list" aria-label={t('qualityDetails')} data-i18n-aria="qualityDetails"><div><dt data-i18n="weatherModel">{t('weatherModel')}</dt><dd><Skeleton aria-label={t('loadingWeatherSource')} /></dd></div></dl>
     </div>
-    <p class="evidence-footnote"><Icon name="shield-check" size="sm" /> Competition eligibility is determined by backend provenance validation.</p>
+    <p class="evidence-footnote"><Icon name="shield-check" size="sm" /> <span data-i18n="competitionGateNote">{t('competitionGateNote')}</span></p>
   </Card>
 </section>

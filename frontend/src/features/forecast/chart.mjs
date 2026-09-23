@@ -1,3 +1,5 @@
+import { text } from '../../lib/preferences.mjs';
+
 const chartWidth = 920;
 const chartHeight = 360;
 const margin = { top: 44, right: 24, bottom: 48, left: 70 };
@@ -41,9 +43,9 @@ function forecastGroups(rows) {
     .sort(([left], [right]) => left.localeCompare(right));
 }
 
-function labelForTurbine(id) {
-  if (id === 'turbine_1') return 'Turbine 01';
-  if (id === 'turbine_2') return 'Turbine 02';
+function labelForTurbine(id, locale) {
+  if (id === 'turbine_1') return text(locale, 'turbineOne');
+  if (id === 'turbine_2') return text(locale, 'turbineTwo');
   return id;
 }
 
@@ -64,16 +66,16 @@ function quantileBand(points, x, y) {
   return [...upper, ...lower].join(' ');
 }
 
-function formatPercent(value) {
-  return `${(value * 100).toFixed(1)}%`;
+function formatPercent(value, locale) {
+  return `${new Intl.NumberFormat(locale === 'kk' ? 'kk-KZ' : 'ru-RU', { maximumFractionDigits: 1 }).format(value * 100)}%`;
 }
 
-export function renderForecastChart(rows) {
+export function renderForecastChart(rows, locale = 'ru') {
   const groups = forecastGroups(Array.isArray(rows) ? rows : []);
   const chartPoints = groups.flatMap(([, points]) => points.flatMap((point) => [point.p10, point.p50, point.p90]))
     .filter(finiteValue);
   if (groups.length === 0 || chartPoints.length === 0) {
-    return '<p class="chart-empty">No forecast data available for this run.</p>';
+    return `<p class="chart-empty">${escapeHtml(text(locale, 'chartEmpty'))}</p>`;
   }
 
   const leads = groups.flatMap(([, points]) => points.map((point) => point.lead));
@@ -93,7 +95,7 @@ export function renderForecastChart(rows) {
     const fraction = index / 4;
     const value = domainMax - (domainMax - domainMin) * fraction;
     const yPosition = margin.top + plotHeight * fraction;
-    return `<g class="chart-grid-row"><line x1="${margin.left}" y1="${yPosition.toFixed(2)}" x2="${(chartWidth - margin.right).toFixed(2)}" y2="${yPosition.toFixed(2)}" /><text x="${margin.left - 12}" y="${(yPosition + 4).toFixed(2)}" text-anchor="end">${formatPercent(value)}</text></g>`;
+    return `<g class="chart-grid-row"><line x1="${margin.left}" y1="${yPosition.toFixed(2)}" x2="${(chartWidth - margin.right).toFixed(2)}" y2="${yPosition.toFixed(2)}" /><text x="${margin.left - 12}" y="${(yPosition + 4).toFixed(2)}" text-anchor="end">${formatPercent(value, locale)}</text></g>`;
   }).join('');
 
   const allLeads = [...new Set(leads)].sort((left, right) => left - right);
@@ -101,18 +103,18 @@ export function renderForecastChart(rows) {
   const ticks = tickIndexes.map((index) => {
     const lead = allLeads[index];
     const xPosition = x(lead);
-    return `<g class="chart-x-tick"><line x1="${xPosition.toFixed(2)}" y1="${(margin.top + plotHeight).toFixed(2)}" x2="${xPosition.toFixed(2)}" y2="${(margin.top + plotHeight + 5).toFixed(2)}" /><text x="${xPosition.toFixed(2)}" y="${(chartHeight - 16).toFixed(2)}" text-anchor="middle">+${lead}h</text></g>`;
+    return `<g class="chart-x-tick"><line x1="${xPosition.toFixed(2)}" y1="${(margin.top + plotHeight).toFixed(2)}" x2="${xPosition.toFixed(2)}" y2="${(margin.top + plotHeight + 5).toFixed(2)}" /><text x="${xPosition.toFixed(2)}" y="${(chartHeight - 16).toFixed(2)}" text-anchor="middle">${escapeHtml(text(locale, 'leadHours', { hours: lead }))}</text></g>`;
   }).join('');
 
   const series = groups.map(([id, points], index) => {
     const color = index % 2 === 0 ? 'hsl(var(--accent))' : 'hsl(var(--brand))';
-    const label = escapeHtml(labelForTurbine(id));
+    const label = escapeHtml(labelForTurbine(id, locale));
     const band = quantileBand(points, x, y);
     const lower = linePath(points, 'p10', x, y);
     const median = linePath(points, 'p50', x, y);
     const upper = linePath(points, 'p90', x, y);
-    return `<g class="forecast-series" style="--series-color:${color}"><polygon class="uncertainty-band" points="${band}" aria-label="${label} p10 to p90 interval" /><path class="forecast-bound" data-quantile="p10" d="${lower}" /><path class="forecast-median" data-quantile="p50" d="${median}" /><path class="forecast-bound" data-quantile="p90" d="${upper}" /><g class="series-label"><line x1="${margin.left + index * 160}" y1="21" x2="${margin.left + 22 + index * 160}" y2="21" /><text x="${margin.left + 30 + index * 160}" y="25">${label}</text></g></g>`;
+    return `<g class="forecast-series" style="--series-color:${color}"><polygon class="uncertainty-band" points="${band}" aria-label="${label} · p10–p90" /><path class="forecast-bound" data-quantile="p10" d="${lower}" /><path class="forecast-median" data-quantile="p50" d="${median}" /><path class="forecast-bound" data-quantile="p90" d="${upper}" /><g class="series-label"><line x1="${margin.left + index * 160}" y1="21" x2="${margin.left + 22 + index * 160}" y2="21" /><text x="${margin.left + 30 + index * 160}" y="25">${label}</text></g></g>`;
   }).join('');
 
-  return `<svg class="forecast-plot" viewBox="0 0 ${chartWidth} ${chartHeight}" role="img" aria-label="Hourly forecast by turbine with p10 to p90 uncertainty bands"><title>Forecast output and uncertainty range</title><desc>Each shaded band spans the returned p10 to p90 values; the solid line is p50. The horizontal axis shows forecast lead hours.</desc><g class="chart-grid">${grid}</g><line class="chart-axis" x1="${margin.left}" y1="${margin.top}" x2="${margin.left}" y2="${margin.top + plotHeight}" /><line class="chart-axis" x1="${margin.left}" y1="${margin.top + plotHeight}" x2="${chartWidth - margin.right}" y2="${margin.top + plotHeight}" />${ticks}<text class="axis-title" x="16" y="${chartHeight / 2}" text-anchor="middle" transform="rotate(-90 16 ${chartHeight / 2})">Normalized output (%)</text>${series}</svg>`;
+  return `<svg class="forecast-plot" viewBox="0 0 ${chartWidth} ${chartHeight}" role="img" aria-label="${escapeHtml(text(locale, 'chartSvgLabel'))}"><title>${escapeHtml(text(locale, 'chartSvgTitle'))}</title><desc>${escapeHtml(text(locale, 'chartSvgDescription'))}</desc><g class="chart-grid">${grid}</g><line class="chart-axis" x1="${margin.left}" y1="${margin.top}" x2="${margin.left}" y2="${margin.top + plotHeight}" /><line class="chart-axis" x1="${margin.left}" y1="${margin.top + plotHeight}" x2="${chartWidth - margin.right}" y2="${margin.top + plotHeight}" />${ticks}<text class="axis-title" x="16" y="${chartHeight / 2}" text-anchor="middle" transform="rotate(-90 16 ${chartHeight / 2})">${escapeHtml(text(locale, 'normalizedOutput'))}</text>${series}</svg>`;
 }

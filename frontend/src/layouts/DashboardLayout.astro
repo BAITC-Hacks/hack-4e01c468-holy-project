@@ -13,13 +13,29 @@ const { title, description } = Astro.props;
 ---
 
 <!doctype html>
-<html lang="en" data-theme="light">
+<html lang="ru" data-theme="light">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="hsl(201 38% 11%)" />
     <meta name="description" content={description} />
     <title>{title}</title>
+    <script is:inline>
+      (() => {
+        const root = document.documentElement;
+        try {
+          const locale = localStorage.getItem('windline.locale');
+          root.lang = locale === 'kk' ? 'kk' : 'ru';
+          const preference = localStorage.getItem('windline.theme');
+          root.dataset.theme = preference === 'light' || preference === 'dark'
+            ? preference
+            : matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        } catch {
+          root.lang = 'ru';
+          root.dataset.theme = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        }
+      })();
+    </script>
   </head>
   <body>
     <UIPrimitives />

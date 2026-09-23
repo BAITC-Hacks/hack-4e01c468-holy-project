@@ -1,35 +1,42 @@
 ---
 import { Badge, Icon, Sidebar } from '@santi020k/lumen-astro';
+import { text } from '../lib/preferences.mjs';
+import '../styles/preview-safety.css';
 ---
 
-<a class="skip-link" href="#main-content">Skip to content</a>
+<a class="skip-link" href="#main-content" data-i18n="skipContent">{text('ru', 'skipContent')}</a>
 <div class="workspace-shell">
-  <Sidebar class="app-rail" variant="unstyled" aria-label="Workspace navigation" data-theme="dark">
-    <a class="brand" href="#overview" aria-label="Windline forecast workspace">
+  <Sidebar class="app-rail" variant="unstyled" aria-label={text('ru', 'workspaceNavigation')} data-i18n-aria="workspaceNavigation" data-theme="dark">
+    <a class="brand" href="#overview" aria-label={text('ru', 'workspaceBrand')} data-i18n-aria="workspaceBrand">
       <span class="brand-mark"><Icon name="wind" size="lg" /></span>
-      <span class="brand-copy">WINDLINE<small>FORECAST WORKSPACE</small></span>
+      <span class="brand-copy">WINDLINE<small data-i18n="brandSubtitle">{text('ru', 'brandSubtitle')}</small></span>
     </a>
-    <p class="rail-caption">MONITOR</p>
-    <nav class="section-nav" aria-label="Dashboard sections">
+    <p class="rail-caption" data-i18n="monitor">{text('ru', 'monitor')}</p>
+    <nav class="section-nav" aria-label={text('ru', 'sectionNavigation')} data-i18n-aria="sectionNavigation">
       <a class="nav-link" href="#overview" aria-current="location">
-        <Icon name="chart-no-axes-combined" size="sm" /><span>Overview</span>
+        <Icon name="chart-no-axes-combined" size="sm" /><span data-i18n="navOverview">{text('ru', 'navOverview')}</span>
       </a>
       <a class="nav-link" href="#forecast">
-        <Icon name="table-2" size="sm" /><span>Forecast rows</span>
+        <Icon name="table-2" size="sm" /><span data-i18n="navForecast">{text('ru', 'navForecast')}</span>
       </a>
       <a class="nav-link" href="#backtest">
-        <Icon name="history" size="sm" /><span>Backtest</span>
+        <Icon name="history" size="sm" /><span data-i18n="navBacktest">{text('ru', 'navBacktest')}</span>
       </a>
       <a class="nav-link" href="#agent-trace">
-        <Icon name="list-checks" size="sm" /><span>Agent trace</span>
+        <Icon name="list-checks" size="sm" /><span data-i18n="navTrace">{text('ru', 'navTrace')}</span>
       </a>
       <a class="nav-link" href="#data-quality">
-        <Icon name="shield-check" size="sm" /><span>Data quality</span>
+        <Icon name="shield-check" size="sm" /><span data-i18n="navQuality">{text('ru', 'navQuality')}</span>
       </a>
     </nav>
+    <div class="rail-image" aria-hidden="true">
+      <img src="/images/wind-landscape.webp" alt="" loading="lazy" />
+      <p data-i18n="railTagline">Энергия ветра — ясность в каждом прогнозе.</p>
+    </div>
     <div class="rail-foot">
       <span class="connection-dot" data-connection-dot></span>
-      <div><strong>Local API</strong><span data-api-status aria-live="polite">Connecting</span></div>
+      <div><strong data-i18n="localApi">{text('ru', 'localApi')}</strong><span data-api-status aria-live="polite" data-i18n="connecting">{text('ru', 'connecting')}</span></div>
+      <Icon name="chevron-right" size="sm" />
     </div>
   </Sidebar>
 
@@ -37,11 +44,17 @@ import { Badge, Icon, Sidebar } from '@santi020k/lumen-astro';
     <header class="topbar">
       <div class="topbar-context">
         <span class="context-mark"><Icon name="wind" size="sm" /></span>
-        <span>WIND POWER <span class="context-slash">/</span> OPERATIONS</span>
+        <span data-i18n="powerOperations">{text('ru', 'powerOperations')}</span>
       </div>
-      <div class="topbar-status">
-        <Badge class="mode-badge" variant="outline" data-mode-badge>Checking mode</Badge>
-        <span class="topbar-run"><span>Selected run</span><code data-run-id>—</code></span>
+      <div class="topbar-actions">
+        <div class="language-switch" role="group" aria-label={text('ru', 'languageLabel')} data-i18n-aria="languageLabel">
+          <button type="button" data-locale-switch="ru" aria-pressed="true">RU</button>
+          <button type="button" data-locale-switch="kk" aria-pressed="false">ҚАЗ</button>
+        </div>
+        <button class="theme-toggle" type="button" data-theme-toggle aria-label={text('ru', 'switchToDark')} title={text('ru', 'themeLabel')} data-i18n-title="themeLabel" data-i18n-aria-dynamic="themeToggle" aria-pressed="false">
+          <Icon name="moon" size="sm" />
+        </button>
+        <Badge class="mode-badge" variant="outline" data-mode-badge data-i18n="checkingMode">{text('ru', 'checkingMode')}</Badge>
       </div>
     </header>
     <main id="main-content" class="page-content">

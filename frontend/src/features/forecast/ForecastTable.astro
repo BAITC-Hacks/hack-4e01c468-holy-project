@@ -1,30 +1,36 @@
 ---
 import { Card, Icon, Table } from '@santi020k/lumen-astro';
 import SectionHeader from '../../components/SectionHeader.astro';
+import { text } from '../../lib/preferences.mjs';
+
+const t = (key: string) => text('ru', key);
 ---
 
 <section id="forecast" class="section-block supporting-section" aria-labelledby="forecast-rows-title">
   <SectionHeader
-    kicker="FORECAST DATA"
-    title="Hourly forecast rows"
+    kicker={t('forecastData')}
+    kickerKey="forecastData"
+    title={t('forecastRowsTitle')}
+    titleKey="forecastRowsTitle"
     id="forecast-rows-title"
-    description="Exact p10, p50, and p90 values returned by the selected run. Values are normalized output fractions, shown as percentages."
+    description={t('forecastRowsDescription')}
+    descriptionKey="forecastRowsDescription"
   />
-  <Card class="data-card" as="section" aria-label="Forecast records">
+  <Card class="data-card" as="section" aria-label={t('forecastRecordsAria')} data-i18n-aria="forecastRecordsAria">
     <div class="data-card-head">
-      <div><span class="eyebrow">RECORDS</span><p class="record-count" data-record-count>Loading rows</p></div>
+      <div><span class="eyebrow" data-i18n="records">{t('records')}</span><p class="record-count" data-record-count>{t('loadingRows')}</p></div>
       <a class="download-link download-link--standalone" data-table-csv-link hidden>
-        <Icon name="download" size="sm" /> Download CSV
+        <Icon name="download" size="sm" /> <span data-i18n="downloadCsv">{t('downloadCsv')}</span>
       </a>
     </div>
-    <div class="table-scroll" tabindex="0" aria-label="Scrollable forecast records table">
+    <div class="table-scroll" tabindex="0" aria-label={t('scrollForecastTable')} data-i18n-aria="scrollForecastTable">
       <Table class="forecast-table">
-        <caption>Forecast records for the selected run. Power quantiles are normalized output, not megawatts.</caption>
+        <caption data-i18n="forecastTableCaption">{t('forecastTableCaption')}</caption>
         <thead>
-          <tr><th scope="col">Valid time (UTC)</th><th scope="col">Turbine</th><th scope="col">Lead</th><th scope="col">P10</th><th scope="col">P50</th><th scope="col">P90</th></tr>
+          <tr><th scope="col" data-i18n="validTime">{t('validTime')}</th><th scope="col" data-i18n="turbine">{t('turbine')}</th><th scope="col" data-i18n="lead">{t('lead')}</th><th scope="col">P10</th><th scope="col">P50</th><th scope="col">P90</th></tr>
         </thead>
         <tbody data-forecast-rows>
-          <tr><td colspan="6"><span class="table-loading">Loading forecast records…</span></td></tr>
+          <tr><td colspan="6"><span class="table-loading" data-i18n="loadingForecastRows">{t('loadingForecastRows')}</span></td></tr>
         </tbody>
       </Table>
     </div>

@@ -1,22 +1,28 @@
 ---
 import { Card, Empty, Icon, Skeleton } from '@santi020k/lumen-astro';
 import SectionHeader from '../../components/SectionHeader.astro';
+import { text } from '../../lib/preferences.mjs';
+
+const t = (key: string) => text('ru', key);
 ---
 
 <section id="agent-trace" class="section-block supporting-section" aria-labelledby="agent-trace-title">
   <SectionHeader
-    kicker="RUN DECISIONS"
-    title="Agent trace"
+    kicker={t('runDecisions')}
+    kickerKey="runDecisions"
+    title={t('agentTraceTitle')}
+    titleKey="agentTraceTitle"
     id="agent-trace-title"
-    description="Ordered actions and outcomes recorded during the selected run. Explanations are rendered as plain text."
+    description={t('agentTraceDescription')}
+    descriptionKey="agentTraceDescription"
   />
-  <Card class="data-card trace-card" as="section" aria-label="Selected run agent event trace">
+  <Card class="data-card trace-card" as="section" aria-label={t('selectedRunTrace')} data-i18n-aria="selectedRunTrace">
     <div class="trace-summary"><span class="trace-mark"><Icon name="list-checks" size="sm" /></span><span data-trace-summary>Loading event trace…</span></div>
     <div data-agent-events>
-      <ol class="event-list" aria-label="Agent run events" data-event-list><li><Skeleton aria-label="Loading agent events" /></li></ol>
+      <ol class="event-list" aria-label={t('agentEvents')} data-i18n-aria="agentEvents" data-event-list><li><Skeleton aria-label={t('loadingAgentEvents')} /></li></ol>
       <Empty class="inline-empty" variant="compact" data-event-empty hidden>
-        <h3>No event trace</h3>
-        <p>The selected run did not include agent events.</p>
+        <h3 data-i18n="noEventTrace">{t('noEventTrace')}</h3>
+        <p data-i18n="noEventTraceDescription">{t('noEventTraceDescription')}</p>
       </Empty>
     </div>
   </Card>

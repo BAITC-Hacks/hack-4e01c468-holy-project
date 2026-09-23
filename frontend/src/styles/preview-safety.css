@@ -1,0 +1,38 @@
+/* Live-preview containment while the reference stylesheet is integrated. */
+img { max-width: 100%; }
+.workspace-main, .page-content, .dashboard-content, .forecast-grid > *, .supporting-grid > * { min-width: 0; }
+.page-content { padding: 24px 28px; max-width: 1500px; margin: 0 auto; }
+.dashboard-content { display: grid; gap: 24px; }
+.overview-section { display: grid; gap: 20px; }
+.hero-panel { position: relative; isolation: isolate; overflow: hidden; min-height: 220px; padding: 30px; border-radius: 16px; background: hsl(var(--surface-muted)); }
+.hero-copy { position: relative; z-index: 2; max-width: 68%; }
+.hero-copy h1 { margin: 14px 0 12px; font-size: clamp(26px, 2.5vw, 38px); line-height: 1.15; }
+.hero-description { color: hsl(var(--ink-soft)); line-height: 1.6; }
+.hero-art { position: absolute; inset: 0 0 0 38%; z-index: -1; }
+.hero-art img { width: 100%; height: 100%; object-fit: cover; object-position: right 45%; }
+.hero-art::after { content: ''; position: absolute; inset: 0; background: linear-gradient(90deg,hsl(var(--surface-muted)),transparent 85%); }
+.hero-image-caption { position: absolute; right: 14px; bottom: 10px; font-size: 10px; z-index: 2; }
+.hero-capabilities { display: flex; gap: 24px; flex-wrap: wrap; list-style: none; padding: 0; margin: 24px 0 0; }
+.hero-capabilities li { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.rail-image { position: relative; overflow: hidden; width: 100%; height: 230px; flex-shrink: 1; margin-top: 28px; border-radius: 10px; }
+.rail-image img { width: 100%; height: 100%; object-fit: cover; object-position: 80% center; }
+.rail-image::after { content: ''; position: absolute; inset: 0; background: linear-gradient(transparent,hsl(var(--canvas))); }
+.rail-image p { position: absolute; z-index: 1; bottom: 14px; left: 14px; right: 14px; font-size: 16px; font-weight: 650; }
+.metric-strip { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 16px; }
+.metric-card { min-width: 0; padding: 20px; border: 1px solid hsl(var(--line)); border-radius: 12px; background: hsl(var(--surface)); }
+.forecast-grid { display: grid; grid-template-columns: minmax(0,2fr) minmax(280px,1fr); gap: 22px; align-items: start; }
+.forecast-aside { display: grid; gap: 18px; }
+.chart-card, .controls-card, .run-context { min-width: 0; padding: 22px; border: 1px solid hsl(var(--line)); border-radius: 14px; background: hsl(var(--surface)); }
+.forecast-plot { display: block; width: 100%; height: auto; min-height: 280px; }
+.forecast-plot text { fill: hsl(var(--ink-soft)); font-size: 13px; }
+.forecast-plot .chart-grid line, .forecast-plot .chart-axis, .forecast-plot .chart-x-tick line { stroke: hsl(var(--line)); }
+.forecast-plot .uncertainty-band { fill: var(--series-color); opacity: .18; }
+.forecast-plot .forecast-bound { fill: none; stroke: var(--series-color); opacity: .4; stroke-width: 1; }
+.forecast-plot .forecast-median, .forecast-plot .series-label line { fill: none; stroke: var(--series-color); stroke-width: 2.5; }
+.supporting-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 22px; }
+.topbar-actions, .language-switch { display: flex; align-items: center; gap: 8px; }
+.topbar-actions button { min-width: 38px; min-height: 38px; border: 1px solid hsl(var(--line)); border-radius: 8px; background: hsl(var(--surface)); color: hsl(var(--ink)); cursor: pointer; }
+.topbar-actions button[aria-pressed=true] { background: hsl(var(--brand-soft)); color: hsl(var(--brand)); }
+@media(max-width:1100px) { .forecast-grid { grid-template-columns: minmax(0,1.6fr) minmax(260px,1fr); } .metric-strip { grid-template-columns: repeat(2,minmax(0,1fr)); } .hero-copy { max-width: 80%; } }
+@media(max-width:800px) { .forecast-grid,.supporting-grid { grid-template-columns: minmax(0,1fr); } .rail-image { display:none; } .page-content { padding:18px; } .hero-panel { padding:22px; } .hero-copy { max-width:100%; } .hero-art { opacity:.35; inset:0; } }
+@media(max-width:480px) { .metric-strip { gap:10px; } .metric-card { padding:14px; } .hero-capabilities { gap:12px; } .hero-copy h1 { font-size:26px; } .forecast-plot { min-height:180px; } .page-content { padding:12px; } }

@@ -7,7 +7,7 @@ import threading
 import uuid
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable
 
 
@@ -29,7 +29,6 @@ class _Job:
     state: str = "queued"
     result: dict[str, Any] | None = None
     error: dict[str, str] | None = None
-    terminal: threading.Event = field(default_factory=threading.Event)
 
     def view(self) -> dict[str, Any]:
         return copy.deepcopy(
@@ -79,15 +78,6 @@ class JobRunner:
                 raise JobNotFound
             return job.view()
 
-    def wait_for_terminal(self, job_id: str, timeout: float | None = None) -> bool:
-        """Wait for an existing job to reach a terminal state."""
-        with self._lock:
-            job = self._jobs.get(job_id)
-            if job is None:
-                raise JobNotFound
-            event = job.terminal
-        return event.wait(timeout)
-
     def shutdown(self, *, wait: bool = True) -> None:
         """Stop admission and join the worker during server shutdown."""
         with self._lock:
@@ -134,7 +124,6 @@ class JobRunner:
             job.result = result
             job.error = error
             self._active_job = None
-            job.terminal.set()
             self._trim_completed()
 
     def _trim_completed(self) -> None:

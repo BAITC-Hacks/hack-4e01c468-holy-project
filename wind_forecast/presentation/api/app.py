@@ -6,12 +6,14 @@ import json
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
+from collections.abc import Mapping
+from types import SimpleNamespace
 from typing import Any
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse, Response
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -29,6 +31,7 @@ from wind_forecast.service import Application
 
 _ALLOWED_HOSTS = {"127.0.0.1", "localhost"}
 _ALLOWED_PORTS = {8000, 4321}
+_MAX_REQUEST_BYTES = 2048
 _ARTIFACT_NAMES = (
     "forecast.csv",
     "manifest.json",
@@ -117,7 +120,6 @@ class LocalApiBoundaryMiddleware:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        print("BOUNDARY", scope.get("path"), flush=True)
         if scope["type"] != "http" or not scope.get("path", "").startswith("/api/"):
             await self.app(scope, receive, send)
             return
@@ -149,24 +151,65 @@ class LocalApiBoundaryMiddleware:
                 )(scope, receive, send)
                 return
 
+            content_length = headers.get(b"content-length")
+            if content_length is not None:
+                try:
+                    declared_size = int(content_length)
+                except ValueError:
+                    await _error(
+                        "invalid_request", "The request is invalid.", 400
+                    )(scope, receive, send)
+                    return
+                if declared_size < 0 or declared_size > _MAX_REQUEST_BYTES:
+                    await _error(
+                        "request_too_large", "The request is too large.", 413
+                    )(scope, receive, send)
+                    return
+
+            body = bytearray()
+            while True:
+                message = await receive()
+                if message["type"] == "http.disconnect":
+                    return
+                if message["type"] != "http.request":
+                    continue
+                body.extend(message.get("body", b""))
+                if len(body) > _MAX_REQUEST_BYTES:
+                    await _error(
+                        "request_too_large", "The request is too large.", 413
+                    )(scope, receive, send)
+                    return
+                if not message.get("more_body", False):
+                    break
+
+            body_bytes = bytes(body)
+            delivered = False
+
+            async def replay_body():
+                nonlocal delivered
+                if delivered:
+                    return {"type": "http.request", "body": b"", "more_body": False}
+                delivered = True
+                return {"type": "http.request", "body": body_bytes, "more_body": False}
+
+            await self.app(scope, replay_body, send)
+            return
+
         await self.app(scope, receive, send)
-        print("BOUNDARY DONE", scope.get("path"), flush=True)
 
 
-def _load_run_view(application: Any, run_id: str) -> dict[str, Any]:
+def _load_run_view(
+    application: Any, run_id: str, result: Any | None = None
+) -> dict[str, Any]:
     _check_run_tree(application, run_id)
-    result = application.read_run(run_id)
+    data = application.read_run(run_id)
     # For persisted runs, the stored manifest is the source of identity. The
     # application already validates its content-addressed directory boundary.
-    data = result
-    return run_view(
-        type(
-            "ReadRunResult",
-            (),
-            {"run_id": run_id, "status": result.get("manifest", {}).get("status"), "reused": False},
-        )(),
-        data,
-    )
+    if result is None:
+        manifest = data.get("manifest") if isinstance(data, Mapping) else None
+        status = manifest.get("status") if isinstance(manifest, Mapping) else None
+        result = SimpleNamespace(run_id=run_id, status=status, reused=False)
+    return run_view(result, data)
 
 
 def create_app(application: Any | None = None) -> FastAPI:
@@ -233,7 +276,6 @@ def create_app(application: Any | None = None) -> FastAPI:
 
     @app.get("/api/health")
     async def health() -> dict[str, Any]:
-        print("HEALTH ROUTE", flush=True)
         settings = application.settings
         return {
             "status": "ok",
@@ -249,7 +291,7 @@ def create_app(application: Any | None = None) -> FastAPI:
         if not valid_run_id(result.run_id):
             return {"run": None}
         try:
-            return {"run": _load_run_view(application, result.run_id)}
+            return {"run": _load_run_view(application, result.run_id, result)}
         except (FileNotFoundError, KeyError, ValueError):
             return {"run": None}
 
@@ -311,15 +353,22 @@ def create_app(application: Any | None = None) -> FastAPI:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return _error("forecast_not_found", "The forecast file was not found.", 404)
+        files = manifest.get("files") if isinstance(manifest, Mapping) else None
         if (
-            manifest.get("run_id") != run_id
-            or "forecast.csv" not in manifest.get("files", {})
+            not isinstance(manifest, Mapping)
+            or manifest.get("run_id") != run_id
+            or not isinstance(files, Mapping)
+            or "forecast.csv" not in files
         ):
             return _error("forecast_not_found", "The forecast file was not found.", 404)
-        return FileResponse(
-            forecast_path,
+        try:
+            contents = forecast_path.read_bytes()
+        except OSError:
+            return _error("forecast_not_found", "The forecast file was not found.", 404)
+        return Response(
+            content=contents,
             media_type="text/csv",
-            filename="forecast.csv",
+            headers={"content-disposition": 'attachment; filename="forecast.csv"'},
         )
 
     return app

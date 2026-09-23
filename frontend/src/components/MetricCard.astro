@@ -5,9 +5,10 @@ interface Props {
   label: string;
   value: string;
   name: string;
+  labelKey: string;
 }
 
-const { label, value, name } = Astro.props;
+const { label, value, name, labelKey } = Astro.props;
 ---
 
-<Stat class="metric-card" data-stat={name} label={label} value={value} />
+<Stat class="metric-card" data-stat={name} data-l10n-stat-label={labelKey} label={label} value={value} />

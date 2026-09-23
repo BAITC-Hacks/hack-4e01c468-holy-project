@@ -15,14 +15,25 @@ import pandas as pd
 RUN_ID_PATTERN = re.compile(
     r"^run-\d{8}T\d{6}Z-h(?:24|48)-[0-9a-f]{12}(?:-[0-9a-f]{8})?$"
 )
-_PRIVATE_KEY_PARTS = ("api_key", "secret", "password", "credential", "authorization", "token")
+_PRIVATE_KEY_PARTS = (
+    "key",
+    "secret",
+    "password",
+    "credential",
+    "authorization",
+    "token",
+)
 _PATH_KEY_PATTERN = re.compile(r"(?:^|_)(?:path|directory|dir)$", re.IGNORECASE)
 _LOCAL_PATH_PATTERN = re.compile(
     r"(?<![:\w])(?:/home|/tmp|/Users|/root|/var|/etc|/mnt|/opt|/srv|/private|/workspace)"
     r"(?:/[^\s,;\])}]+)*"
 )
 _WINDOWS_PATH_PATTERN = re.compile(r"\b[A-Za-z]:\\(?:[^\s,;\])}]+\\?)*")
-_RUN_VIEW_FIELDS = {
+_SECRET_VALUE_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9])(?:sk-[A-Za-z0-9_-]{16,}|Bearer\s+[A-Za-z0-9._~+/=-]{8,})",
+    re.IGNORECASE,
+)
+_RUN_VIEW_FIELDS = (
     "run_id",
     "status",
     "reused",
@@ -31,7 +42,7 @@ _RUN_VIEW_FIELDS = {
     "events",
     "report",
     "forecast",
-}
+)
 
 
 def valid_run_id(value: str) -> bool:
@@ -56,14 +67,18 @@ def run_view(result: Any, data: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(forecast, list):
         forecast = []
 
+    manifest = data.get("manifest", {})
+    metrics = data.get("metrics", {})
+    events = data.get("events", [])
+    report = data.get("report", "")
     view = {
         "run_id": run_id,
         "status": status,
         "reused": bool(getattr(result, "reused", False)),
-        "manifest": _clean(data.get("manifest", {})),
-        "metrics": _clean(data.get("metrics", {})),
-        "events": _clean(data.get("events", [])),
-        "report": _clean(data.get("report", "")),
+        "manifest": _clean(manifest if isinstance(manifest, Mapping) else {}),
+        "metrics": _clean(metrics if isinstance(metrics, Mapping) else {}),
+        "events": _clean(events if isinstance(events, list) else []),
+        "report": _clean(report if isinstance(report, str) else ""),
         "forecast": _clean(forecast),
     }
     return {key: view[key] for key in _RUN_VIEW_FIELDS}
@@ -147,4 +162,5 @@ def _clean_string(value: str) -> str:
             if parsed.tzinfo is not None:
                 return _timestamp(parsed) or ""
     cleaned = _LOCAL_PATH_PATTERN.sub("[local path]", value)
-    return _WINDOWS_PATH_PATTERN.sub("[local path]", cleaned)
+    cleaned = _WINDOWS_PATH_PATTERN.sub("[local path]", cleaned)
+    return _SECRET_VALUE_PATTERN.sub("[redacted secret]", cleaned)

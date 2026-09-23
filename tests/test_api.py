@@ -1,15 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import threading
-from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import numpy as np
 import pandas as pd
 import pytest
-from fastapi.testclient import TestClient
 
 from wind_forecast.contracts import RunRequest, RunResult
 RUN_ID = "run-20260201T000000Z-h24-0123456789ab"
@@ -30,10 +30,11 @@ def _run_data(tmp_path: Path, *, status: str = "degraded") -> dict[str, Any]:
             "forecast_origin": pd.Timestamp(ORIGIN),
             "local_path": str(tmp_path / "must-not-leak"),
             "openai_api_key": "do-not-leak-this-secret",
+            "openai_key": "do-not-leak-this-alternate-key",
         },
         "metrics": {"mae": np.nan, "sample_count": 0},
         "events": [{"timestamp": pd.Timestamp(ORIGIN), "score": np.inf}],
-        "report": "Forecast report",
+        "report": "Forecast report /tmp/private-report sk-proj-test_abcdefghijklmnopqrstuvwxyz",
         "forecast": pd.DataFrame(
             {
                 "run_id": [RUN_ID],
@@ -77,11 +78,41 @@ class StubApplication:
         return self.data
 
 
-def _client(app: Any) -> TestClient:
-    return TestClient(app, base_url="http://127.0.0.1:8000")
+class ApiTestClient:
+    """Synchronous test facade over httpx's in-process ASGI transport."""
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        del exc_type, exc, traceback
+        self.app.state.job_runner.shutdown(wait=True)
+
+    def request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
+        async def send():
+            transport = httpx.ASGITransport(app=self.app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://127.0.0.1:8000"
+            ) as client:
+                return await client.request(method, url, **kwargs)
+
+        return asyncio.run(send())
+
+    def get(self, url: str, **kwargs: Any) -> httpx.Response:
+        return self.request("GET", url, **kwargs)
+
+    def post(self, url: str, **kwargs: Any) -> httpx.Response:
+        return self.request("POST", url, **kwargs)
 
 
-def _submit(client: TestClient, **overrides: Any):
+def _client(app: Any) -> ApiTestClient:
+    return ApiTestClient(app)
+
+
+def _submit(client: ApiTestClient, **overrides: Any):
     body = {"origin": ORIGIN, "horizon": 24, "refresh": False}
     body.update(overrides)
     return client.post("/api/forecast-jobs", json=body)
@@ -156,6 +187,8 @@ def test_valid_job_uses_server_mode_and_serializes_allowlisted_run_view(tmp_path
     assert run["forecast"][0]["p50"] is None
     assert "must-not-leak" not in accepted.text + str(latest) + str(run)
     assert "do-not-leak-this-secret" not in accepted.text + str(latest) + str(run)
+    assert "do-not-leak-this-alternate-key" not in str(run)
+    assert "sk-proj-test_abcdefghijklmnopqrstuvwxyz" not in str(run)
     assert latest["run"]["run_id"] == RUN_ID
 
 
@@ -255,28 +288,49 @@ def test_host_origin_and_content_type_are_restricted(tmp_path: Path) -> None:
     application = StubApplication(tmp_path)
     client = _client(_create_app(application))
 
-    accepted = client.post(
-        "/api/forecast-jobs",
-        json={"origin": ORIGIN, "horizon": 24, "refresh": False},
-        headers={"origin": "http://localhost:4321"},
-    )
-    hostile_origin = client.post(
-        "/api/forecast-jobs",
-        json={"origin": ORIGIN, "horizon": 24, "refresh": False},
-        headers={"origin": "https://example.com"},
-    )
-    wrong_content_type = client.post(
-        "/api/forecast-jobs",
-        content='{"origin":"2026-02-01T00:00:00+05:00","horizon":24,"refresh":false}',
-        headers={"content-type": "text/plain"},
-    )
-    invalid_host = client.get("/api/health", headers={"host": "attacker.example"})
+    with client:
+        accepted = client.post(
+            "/api/forecast-jobs",
+            json={"origin": ORIGIN, "horizon": 24, "refresh": False},
+            headers={"origin": "http://localhost:4321"},
+        )
+        hostile_origin = client.post(
+            "/api/forecast-jobs",
+            json={"origin": ORIGIN, "horizon": 24, "refresh": False},
+            headers={"origin": "https://example.com"},
+        )
+        wrong_content_type = client.post(
+            "/api/forecast-jobs",
+            content='{"origin":"2026-02-01T00:00:00+05:00","horizon":24,"refresh":false}',
+            headers={"content-type": "text/plain"},
+        )
+        invalid_host = client.get("/api/health", headers={"host": "attacker.example"})
 
     assert accepted.status_code == 202
     assert hostile_origin.status_code == 403
     assert wrong_content_type.status_code == 415
     assert invalid_host.status_code == 400
     assert len(application.calls) <= 1
+
+
+def test_oversized_forecast_request_is_rejected_before_application_execution(
+    tmp_path: Path,
+) -> None:
+    application = StubApplication(tmp_path)
+    client = _client(_create_app(application))
+    body = '{"origin":"' + ("x" * 3000) + '","horizon":24,"refresh":false}'
+
+    response = client.post(
+        "/api/forecast-jobs",
+        content=body,
+        headers={"content-type": "application/json"},
+    )
+
+    assert response.status_code == 413
+    assert response.json() == {
+        "error": {"code": "request_too_large", "message": "The request is too large."}
+    }
+    assert application.calls == []
 
 
 @pytest.mark.parametrize("run_id", ["../outside", "%2e%2e%2foutside", "run-abc/secret"])
@@ -304,6 +358,10 @@ def test_forecast_download_serves_only_contained_regular_artifact(tmp_path: Path
     run_dir.mkdir()
     forecast_path = run_dir / "forecast.csv"
     forecast_path.write_text("run_id,turbine_id\nrun-1,turbine_1\n", encoding="utf-8")
+    (run_dir / "manifest.json").write_text(
+        '{"run_id":"run-20260201T000000Z-h24-0123456789ab","files":{"forecast.csv":"sha256"}}',
+        encoding="utf-8",
+    )
     application.results[RUN_ID] = RunResult(RUN_ID, run_dir, "degraded", False)
     client = _client(_create_app(application))
 

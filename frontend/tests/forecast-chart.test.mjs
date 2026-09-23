@@ -14,12 +14,15 @@ test('plots both turbines with a p10–p90 uncertainty band and median line', ()
 
   assert.equal((svg.match(/class="uncertainty-band/g) ?? []).length, 2);
   assert.equal((svg.match(/class="forecast-median/g) ?? []).length, 2);
-  assert.match(svg, /Turbine 01/);
-  assert.match(svg, /Turbine 02/);
+  assert.match(svg, /Турбина 01/);
+  assert.match(svg, /Турбина 02/);
+  assert.match(svg, /Почасовой прогноз/);
 });
 
-test('uses an explicit empty message when forecast rows are absent', () => {
-  assert.match(renderForecastChart([]), /No forecast data available/);
+test('localizes chart descriptions and empty state into Kazakh', () => {
+  const svg = renderForecastChart(rows, 'kk');
+  assert.match(svg, /сағаттық болжам/);
+  assert.match(renderForecastChart([], 'kk'), /болжам деректері жоқ/);
 });
 
 test('plots numeric CSV values as normalized quantiles', () => {
